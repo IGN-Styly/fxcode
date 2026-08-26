@@ -42,27 +42,30 @@
 // pub struct AgentId(String);
 //     ...same pattern for SessionId, TurnId, ToolCallId, RequestId, OptionId.
 
-use serde::{Deserialize, Serialize};
+macro_rules! string_id {
+    ($name:ident) => {
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[serde(transparent)]
+        pub struct $name(String);
+        impl $name {
+            pub fn from_raw(inner: String) -> Self {
+                Self(inner)
+            }
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
+    };
+}
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct AgentId(String);
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct SessionId(String);
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct TurnId(String);
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct ToolCallId(String);
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct RequestId(String);
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct OptionId(String);
+use serde::{Deserialize, Serialize, Serializer};
 
+string_id!(AgentId);
 // Uniform API per id type (private inner field keeps clients from fabricating ids
 // by accident while still allowing reads for ACP calls and logging):
 //
