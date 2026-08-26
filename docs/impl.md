@@ -88,11 +88,11 @@ milestone are dependency-ordered so nothing is stubbed twice.
 
 ## Phase 8 — Durability + permissions (**M2 exit**)
 
-- [ ] **8.1** `cmd/perms.rs` respond + sweep_cancelled; watchdog timeout in cancel flow.
-- [ ] **8.2** `views/perms.rs` modal wired to PermsState.
-- [ ] **8.3** SnapshotRequired path: force it (tiny N in dev builds), verify refold.
-- [ ] **8.4** Multiple concurrent sessions across ≥2 agent types simultaneously.
-- [ ] **8.5** Crash tests green in `tests/orchestrator.rs` (crash_and_replay, cursor_replay,
+- [x] **8.1** `cmd/perms.rs` respond + sweep_cancelled; watchdog timeout in cancel flow.
+- [x] **8.2** `views/perms.rs` modal wired to PermsState.
+- [x] **8.3** SnapshotRequired path: force it (tiny N in dev builds), verify refold.
+- [x] **8.4** Multiple concurrent sessions across ≥2 agent types simultaneously.
+- [x] **8.5** Crash tests green in `tests/orchestrator.rs` (crash_and_replay, cursor_replay,
   ordering_guarantee).
 
 ## Phase 9 — Product surface (**M3 exit**)
