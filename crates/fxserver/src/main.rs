@@ -1,65 +1,179 @@
-//! fxserver — headless daemon owning all agents + state. Target: thin (~500 lines).
-//! If logic wants to live here, it belongs in fxcore instead.
+//! fxserver bin — ONLY the numbered boot sequence over the `fxserver` lib
+//! modules. Everything durable lives behind them (see crate docs).
+//!
+//! Failure at step k => log + non-zero exit + STOP, never continue half-booted.
+//! Exits from inside async boot fns are legal here: every one precedes
+//! multi-task liveness, and a corrupt store is FATAL by design (downtime beats
+//! silent data loss — a store wiped on OUR initiative would be silent loss).
 
-mod ifaddr;
-mod net;
-mod pair;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::process::exit;
 
-// Imports to restore as you implement:
-// use std::sync::Arc;
-//
-// use tokio::signal::unix::{signal, SignalKind};
-//
-// use fxcore::{Config, Orchestrator};
+use fxcore::{Config, Orchestrator};
+use fxserver::net;
 
-// TODO: fn main() — tokio runtime built HERE (fxserver owns tokio outright, unlike
-// fxapp). Numbered boot sequence; failure at step k => log + exit non-zero + STOP,
-// never continue half-booted:
-//
-//   1. tracing_subscriber init: EnvFilter, default directive "info" when RUST_LOG is
-//      unset. No failure path (bad filter strings fall back to default) — proceed.
-//   2. CLI args, hand-rolled over std::env for v0 (no clap yet):
-//         --config <path>      alternate config toml (default ~/.fxcode/config.toml)
-//         --bind <socket>      listen override, wins over config's bind_override
-//         --data-dir <path>    state dir override
-//         --rotate-token       short-circuit mode, see step 4
-//      Unknown flag / missing value => print usage to stderr, exit 2.
-//   3. Config::load(): defaults <- config.toml <- CLI overrides. Parse error =>
-//      log + exit 2. File absent => pure defaults, log info (first-run is normal).
-//   4. --rotate-token short-circuit: pair::rotate_token(&cfg.data_dir), print new
-//      token to stderr, exit 0. Store/orchestrator/listener never boot.
-//   5. Orchestrator::new(cfg.clone()).await — opens SQLite (WAL), folds the whole
-//      log into projections. Failure => log + exit 1. Corrupt store is FATAL by
-//      design: never auto-wipe or auto-rebuild (downtime beats silent data loss).
-//   6. pair::ensure_token(&cfg.data_dir) — loads existing token or generates +
-//      chmod 600 + prints it to stderr ONCE (first boot only; pair.rs owns rules).
-//      Failure (dir unwritable / token unreadable / token corrupt) => exit 1;
-//      fail-closed, see pair.rs for why corruption never auto-regenerates.
-//   7. ifaddr::pick(cfg.bind_override) -> addr. Never fails (loopback floor);
-//      log chosen address AND method at info, loudly (which of: bind_override /
-//      tailscale-cli / interface-scan / loopback).
-//   8. net::serve(Arc::new(orchestrator), addr).await — binds and runs until the
-//      shutdown signal (below). Bind failure (port taken, EACCES) => log + exit 1.
-//
-// Shutdown handling — net::serve takes the orchestrator handle and wires this future
-// into axum's graceful-shutdown slot; main just awaits serve():
-//   - select! over BOTH tokio::signal::ctrl_c() AND
-//     tokio::signal::unix::signal(SignalKind::terminate()) — SIGTERM is what
-//     systemd/docker send; Ctrl-C covers interactive dev. Either triggers shutdown.
-//   - First signal:
-//       a. Stop accepting new WS connections. Existing conns are closed by
-//          client.rs teardown with Close(1001 going_away); clients reconnect and
-//          replay from their cursors — no per-connection drain ceremony here.
-//       b. orchestrator.shutdown().await: stop accepting commands, SIGTERM every
-//          agent child, wait GRACE = 5_000 ms, SIGKILL survivors, final WAL
-//          checkpoint on the store. (5s: agents acknowledge ACP cancel/exit fast;
-//          anything still alive after 5s is wedged and killing it is correct.)
-//       c. flush + exit 0.
-//   - Second signal while shutting down: abort immediately, exit 130. Implement by
-//     re-awaiting either signal stream; skip remaining cleanup.
-//
-// TODO tests: none in this file — pure orchestration. Covered via pair.rs/ifaddr.rs
-// units and net/ end-to-end (crates.md test table).
+const USAGE: &str = "\
+fxserver — headless daemon owning all agents + state
+
+USAGE: fxserver [FLAGS]
+
+  --config <path>    alternate config TOML (default ~/.fxcode/config.toml)
+  --bind <socket>    listen override, wins over config's bind_addr
+  --data-dir <path>  state dir override (events.db + token live here)
+  --rotate-token     mint a fresh pairing token, print it ONCE, exit
+                     (store/orchestrator/listener never boot)
+";
+
+enum CliOutcome {
+    /// Ready for steps 3–8.
+    Boot(Cli),
+    /// -h/--help courtesy: usage to stdout, exit 0.
+    Help,
+    /// Unknown flag / missing value / bad --bind socket: usage, exit 2.
+    Reject(String),
+}
+
+struct Cli {
+    config: Option<PathBuf>,
+    bind: Option<SocketAddr>,
+    data_dir: Option<PathBuf>,
+    rotate_token: bool,
+}
+
+fn next_value(argv: &mut std::vec::IntoIter<String>, flag: &str) -> Option<String> {
+    match argv.next() {
+        Some(v) if !v.starts_with("--") => Some(v),
+        _ => {
+            eprintln!("flag {flag} requires a value");
+            None
+        }
+    }
+}
+
+/// Hand-rolled argv walk for v0 (no clap yet). Mirrors spec exactly:
+/// unknown/missing => stderr usage + 2; -h/--help => stdout usage + 0.
+fn parse_cli(mut argv: std::vec::IntoIter<String>) -> CliOutcome {
+    let mut cli = Cli {
+        config: None,
+        bind: None,
+        data_dir: None,
+        rotate_token: false,
+    };
+    while let Some(arg) = argv.next() {
+        match arg.as_str() {
+            "-h" | "--help" => return CliOutcome::Help,
+            "--rotate-token" => cli.rotate_token = true,
+            "--config" => match next_value(&mut argv, "--config") {
+                Some(v) => cli.config = Some(PathBuf::from(v)),
+                None => return CliOutcome::Reject("--config".into()),
+            },
+            "--bind" => match next_value(&mut argv, "--bind") {
+                Some(v) => match v.parse::<SocketAddr>() {
+                    Ok(addr) => cli.bind = Some(addr),
+                    Err(_) => {
+                        return CliOutcome::Reject(format!("--bind is not a socket address: {v}"));
+                    }
+                },
+                None => return CliOutcome::Reject("--bind".into()),
+            },
+            "--data-dir" => match next_value(&mut argv, "--data-dir") {
+                Some(v) => cli.data_dir = Some(PathBuf::from(v)),
+                None => return CliOutcome::Reject("--data-dir".into()),
+            },
+            other => return CliOutcome::Reject(format!("unknown flag {other}")),
+        }
+    }
+    CliOutcome::Boot(cli)
+}
+
+/// Steps 3–8. Each fallible step logs its OWN error and exits with its class:
+///   2 — configuration domain (unusable config / bad flags)
+///   1 — boot-time IO / orchestration / listener
+///   0 — graceful completion (serve returned after full teardown)
+async fn boot(cli: Cli) {
+    // ── 3. Config: defaults <- config.toml <- CLI overrides ──
+    // --config given: load_from wires data_dir override precedence correctly
+    // (explicit parameter beats BOTH env default AND any file statement).
+    let loaded = match &cli.config {
+        Some(path) => Config::load_from(path, cli.data_dir.clone()),
+        None => Config::load().map(|mut cfg| {
+            if let Some(dir) = &cli.data_dir {
+                cfg.data_dir = dir.clone();
+            }
+            cfg
+        }),
+    };
+    let mut cfg = match loaded {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            tracing::error!(%err, "config unusable");
+            exit(2);
+        }
+    };
+    if let Some(addr) = cli.bind {
+        cfg.bind_override = Some(addr); // CLI wins over config.toml, verbatim w/ port
+    }
+
+    // ── 4. --rotate-token short-circuit: no listener ever binds ──
+    if cli.rotate_token {
+        match fxserver::pair::rotate_token(&cfg.data_dir) {
+            Ok(_) => return, // new token printed by pair.rs exactly once
+            Err(err) => {
+                tracing::error!(%err, "token rotation failed");
+                exit(1);
+            }
+        }
+    }
+
+    // ── 5. Orchestrator: SQLite(WAL) open + whole-log projection fold ──
+    let orchestrator = match Orchestrator::new(cfg.clone()).await {
+        Ok(orch) => orch,
+        Err(err) => {
+            tracing::error!(%err, "orchestrator boot failed");
+            exit(1);
+        }
+    };
+
+    // ── 6. Pairing token (prints itself to stderr ONCE, first creation only) ──
+    if let Err(err) = fxserver::pair::ensure_token(&cfg.data_dir) {
+        tracing::error!(%err, "pairing token unavailable");
+        exit(1);
+    }
+
+    // ── 7. Listen address: chain bottoms out at loopback; pick() logs loudly ──
+    let (addr, method) = fxserver::ifaddr::pick(cfg.bind_override).await;
+    tracing::info!(%addr, ?method, "binding");
+
+    // ── 8. Serve until SIGTERM/Ctrl-C; child kill ladder runs inside fxcore ──
+    if let Err(err) = net::serve(std::sync::Arc::new(orchestrator), addr, &cfg.data_dir).await {
+        tracing::error!(%err, "listener failed");
+        exit(1);
+    }
+}
+
 fn main() {
-    // scaffold: fill in per TODO above
+    // fxserver owns tokio outright (fxapp embeds its own quarantine runtime;
+    // here multi-thread is simply correct for N concurrent agent connections).
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("tokio multithread runtime");
+
+    // ── 1. Tracing: EnvFilter (RUST_LOG), default directive info when unset ──
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    tracing_subscriber::fmt().with_env_filter(filter).init();
+
+    // ── 2. CLI argv walk ──
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    match parse_cli(argv.into_iter()) {
+        CliOutcome::Boot(cli) => runtime.block_on(boot(cli)),
+        CliOutcome::Help => print!("{USAGE}"),
+        CliOutcome::Reject(reason) => {
+            eprintln!("{reason}");
+            eprintln!("{USAGE}");
+            exit(2);
+        }
+    }
 }
