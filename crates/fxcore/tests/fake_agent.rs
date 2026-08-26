@@ -14,375 +14,71 @@
 //! of awaiting block_task inside a callback). The agent's main_fn parks until
 //! either a Step::Crash flips the watch or transports reach EOF.
 //! `block_task()` remains ILLEGAL inside callbacks per SDK docs.
+//!
+//! M2 G1 NOTE: the Script/Step/run_steps engine moved VERBATIM into
+//! `examples/support/testing_agent.rs` so `examples/fake_agent_stdio.rs`
+//! reuses it over real stdio pipes. This file keeps only the DUPLEX wiring.
 
 #![allow(dead_code)]
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 
-use agent_client_protocol as acp_sdk;
 use agent_client_protocol::schema::v1 as s;
 
-use fxcore::driver::acp as client_acp;
 use fxproto::content::Role;
 
-// ── Script engine ────────────────────────────────────────────────────────────
+#[path = "../examples/support/testing_agent.rs"]
+mod testing_agent;
+pub use testing_agent::{ObservedRequest, Script, Step};
 
-/// Deterministic behavior for one fake agent instance. Steps fire IN ORDER per
-/// session/prompt received; each prompt restarts from step 0.
-#[derive(Debug, Clone)]
-pub struct Script(pub Vec<Step>);
+type Harness = testing_agent::Engine;
 
-impl Script {
-    fn materialize(&self) -> Vec<Step> {
-        self.0.clone()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum Step {
-    /// One streamed text chunk notification.
-    Chunk(Role, String),
-    /// tool_call(pending by default).
-    ToolCall { id: String, title: String },
-    /// tool_call_update upsert; Some(output) rides raw_output.
-    ToolCallUpdate {
-        id: String,
-        status: s::ToolCallStatus,
-        output: Option<String>,
-    },
-    /// Full plan snapshot replace.
-    Plan(Vec<s::PlanEntry>),
-    /// session/request_permission; script halts until the outcome arrives.
-    AskPermission(Vec<s::PermissionOption>),
-    /// Close the connection mid-turn WITHOUT answering anything pending.
-    Crash,
-    /// Never respond to this prompt (FX_CANCEL_WATCHDOG_MS override tests only).
-    Stall,
-    /// End the turn with this stop reason (the ONLY terminal step).
-    Stop(s::StopReason),
-}
-
-/// What tests observe (agent-side traffic log):
-#[derive(Debug)]
-pub enum ObservedRequest {
-    NewSession {
-        cwd: std::path::PathBuf,
-        mcp_servers: Vec<s::McpServer>,
-    },
-    Prompt {
-        session_id: String,
-        blocks: Vec<s::ContentBlock>,
-    },
-    Cancelled {
-        session_id: String,
-    },
-    Outcome {
-        session_id: String,
-        outcome: Option<s::RequestPermissionOutcome>,
-    },
-}
-
-pub struct Harness {
-    pub observed_rx: tokio::sync::mpsc::UnboundedReceiver<ObservedRequest>,
-    pub session_ids_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
-}
-
-struct Core {
-    script: std::sync::Mutex<Vec<Step>>,
-    counter: AtomicU64,
-    observed_tx: tokio::sync::mpsc::UnboundedSender<ObservedRequest>,
-    sessions_tx: tokio::sync::mpsc::UnboundedSender<String>,
-    crash_tx: tokio::sync::watch::Sender<bool>,
-}
-
-fn note_chunk(sid: &str, role: Role, text: &str) -> s::SessionNotification {
-    let update = match role {
-        Role::User => s::SessionUpdate::UserMessageChunk(s::ContentChunk::new(
-            s::ContentBlock::from(text.to_owned()),
-        )),
-        Role::Agent => s::SessionUpdate::AgentMessageChunk(s::ContentChunk::new(
-            s::ContentBlock::from(text.to_owned()),
-        )),
-    };
-    s::SessionNotification::new(s::SessionId::new(sid.to_owned()), update)
-}
-
-/// One-pass runner used by BOTH the handler segment before any permission and
-/// the post-outcome continuation. Owned values all the way down.
-fn run_steps(
-    cx: acp_sdk::ConnectionTo<acp_sdk::Client>,
-    sid: String,
-    steps: Vec<Step>,
-    prompt_responder: Option<acp_sdk::Responder<s::PromptResponse>>,
-    observed_tx: tokio::sync::mpsc::UnboundedSender<ObservedRequest>,
-    crash_tx: Option<tokio::sync::watch::Sender<bool>>,
-) -> futures::future::BoxFuture<'static, Result<(), acp_sdk::Error>> {
-    Box::pin(run_steps_inner(
-        cx,
-        sid,
-        steps,
-        prompt_responder,
-        observed_tx,
-        crash_tx,
-    ))
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn run_steps_inner(
-    cx: acp_sdk::ConnectionTo<acp_sdk::Client>,
-    sid: String,
-    steps: Vec<Step>,
-    prompt_responder: Option<acp_sdk::Responder<s::PromptResponse>>,
-    observed_tx: tokio::sync::mpsc::UnboundedSender<ObservedRequest>,
-    crash_tx: Option<tokio::sync::watch::Sender<bool>>,
-) -> Result<(), acp_sdk::Error> {
-    let mut it = steps.into_iter();
-    while let Some(step) = it.next() {
-        match step {
-            Step::Chunk(role, text) => {
-                cx.send_notification(note_chunk(&sid, role, &text))?;
-            }
-            Step::ToolCall { id, title } => {
-                cx.send_notification(s::SessionNotification::new(
-                    s::SessionId::new(sid.clone()),
-                    s::SessionUpdate::ToolCall(s::ToolCall::new(id, title)),
-                ))?;
-            }
-            Step::ToolCallUpdate { id, status, output } => {
-                let mut fields = s::ToolCallUpdateFields::new().status(status);
-                if let Some(out) = output {
-                    fields = fields.raw_output(serde_json::json!({ "text": out }));
-                }
-                cx.send_notification(s::SessionNotification::new(
-                    s::SessionId::new(sid.clone()),
-                    s::SessionUpdate::ToolCallUpdate(s::ToolCallUpdate::new(id, fields)),
-                ))?;
-            }
-            Step::Plan(entries) => {
-                cx.send_notification(s::SessionNotification::new(
-                    s::SessionId::new(sid.clone()),
-                    s::SessionUpdate::Plan(s::Plan::new(entries)),
-                ))?;
-            }
-            Step::AskPermission(opts) => {
-                // Real ACP agents stream the tool_call card BEFORE asking for
-                // permission on it; mirror that so the W6 badge fold has a
-                // card to stamp.
-                cx.send_notification(s::SessionNotification::new(
-                    s::SessionId::new(sid.clone()),
-                    s::SessionUpdate::ToolCall(s::ToolCall::new(
-                        "perm_call_1".to_owned(),
-                        "permission ask".to_owned(),
-                    )),
-                ))?;
-                let perm = s::RequestPermissionRequest::new(
-                    s::SessionId::new(sid.clone()),
-                    s::ToolCallUpdate::new(
-                        "perm_call_1".to_owned(),
-                        s::ToolCallUpdateFields::new().title("permission ask"),
-                    ),
-                    opts,
-                );
-                let remaining: Vec<Step> = it.collect();
-                let cx2 = cx.clone();
-                let obs2 = observed_tx.clone();
-                let sid2 = sid.clone();
-                cx.send_request(perm)
-                    .on_receiving_result(move |outcome| async move {
-                        let _ = obs2.send(ObservedRequest::Outcome {
-                            session_id: sid2.clone(),
-                            outcome: outcome.as_ref().ok().map(|r| r.outcome.clone()),
-                        });
-                        run_steps(cx2, sid2, remaining, prompt_responder, obs2, None).await?;
-                        Ok(())
-                    })?;
-                // Rest runs after the outcome; permission gating ends this pass.
-                return Ok(());
-            }
-            Step::Crash => {
-                if let Some(tx) = crash_tx.clone() {
-                    let _ = tx.send(true); // main_fn breaks ⇒ EOF to the client
-                }
-                return Ok(()); // prompt deliberately NEVER answered
-            }
-            Step::Stall => {
-                std::future::pending::<()>().await;
-                unreachable!("pending never resolves");
-            }
-            Step::Stop(reason) => {
-                if let Some(resp) = prompt_responder {
-                    resp.respond(s::PromptResponse::new(reason))?;
-                }
-                return Ok(());
-            }
-        }
-    }
-    // Script exhausted without an explicit Stop ⇒ end benignly.
-    if let Some(resp) = prompt_responder {
-        resp.respond(s::PromptResponse::new(s::StopReason::EndTurn))?;
-    }
-    Ok(())
-}
-
-/// The client-side pipe halves, handed to the test connection factory (opaque
-/// transports are not Clone, so ends are stored raw and wrapped lazily).
-pub struct ClientEnds {
-    pub out: tokio::io::DuplexStream, // client writes here
-    pub inn: tokio::io::DuplexStream, // client reads here
-}
-
-impl ClientEnds {
-    pub fn into_transport(self) -> impl acp_sdk::ConnectTo<acp_sdk::Client> + 'static {
-        acp_sdk::ByteStreams::new(compat_wrap(self.out), compat_read(self.inn))
-    }
-}
-
-/// One-call wiring:
-///   1. build the two duplex pairs,
-///   2. spawn the agent task binding the ac*/ca_agent ends,
-///   3. hand back observation channels plus the CLIENT pipe ends.
-pub fn start_harness(script: Script) -> (Harness, Arc<std::sync::Mutex<Option<ClientEnds>>>) {
+/// One-call duplex wiring: build the two pairs, spawn the agent task binding
+/// the ac*/ca_agent ends through the SHARED engine, hand back observation
+/// channels plus the CLIENT pipe ends.
+fn start_harness(script: Script) -> (Harness, Arc<Mutex<Option<ClientEnds>>>) {
     let (ca_client_end, ca_agent_end) = tokio::io::duplex(64 * 1024);
     let (ac_agent_end, ac_client_end) = tokio::io::duplex(64 * 1024);
 
-    let (observed_tx, observed_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (sessions_tx, session_ids_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (crash_tx, crash_rx) = tokio::sync::watch::channel(false);
-
-    let counter_for_prompt = Arc::new(AtomicU64::new(0));
-
-    let agent_transport =
-        acp_sdk::ByteStreams::new(compat_wrap(ac_agent_end), compat_read(ca_agent_end));
-
-    tokio::spawn(async move {
-        let steps_cell = Arc::new(std::sync::Mutex::new(script.materialize()));
-        let core = Arc::new(Core {
-            script: std::sync::Mutex::new(Vec::new()),
-            counter: AtomicU64::new(0),
-            observed_tx,
-            sessions_tx,
-            crash_tx: crash_tx.clone(),
-        });
-        let core_new = Arc::clone(&core);
-        let core_prompt = Arc::clone(&core);
-        let core_cancel = Arc::clone(&core);
-        let _ = &core;
-        let result = acp_sdk::Agent
-            .builder()
-            .name("fake-agent")
-            .on_receive_request(
-                async |req: s::InitializeRequest, responder, _cx| {
-                    responder.respond(s::InitializeResponse::new(req.protocol_version))?;
-                    Ok(())
-                },
-                acp_sdk::on_receive_request!(),
-            )
-            .on_receive_request(
-                async move |req: s::NewSessionRequest, responder, _cx| {
-                    let core = core_new.clone();
-                    let n = counter_for_prompt.fetch_add(1, Ordering::SeqCst);
-                    let id = format!("sess-{n:06}");
-                    let _ = core.sessions_tx.send(id.clone());
-                    let _ = core.observed_tx.send(ObservedRequest::NewSession {
-                        cwd: req.cwd.clone(),
-                        mcp_servers: req.mcp_servers.clone(),
-                    });
-                    responder.respond(s::NewSessionResponse::new(s::SessionId::new(id)))?;
-                    Ok(())
-                },
-                acp_sdk::on_receive_request!(),
-            )
-            .on_receive_request(
-                async move |req: s::PromptRequest, responder, cx| {
-                    let core = core_prompt.clone();
-                    let sid = req.session_id.to_string();
-                    let _ = core.observed_tx.send(ObservedRequest::Prompt {
-                        session_id: sid.clone(),
-                        blocks: req.prompt.clone(),
-                    });
-                    let steps = steps_cell.lock().expect("script lock").clone();
-                    // First pass executes right here; permission continuation
-                    // finishes via run_steps' on_receiving_result arm.
-                    run_steps(
-                        cx.clone(),
-                        sid,
-                        steps,
-                        Some(responder),
-                        core.observed_tx.clone(),
-                        Some(core.crash_tx.clone()),
-                    )
-                    .await
-                },
-                acp_sdk::on_receive_request!(),
-            )
-            .on_receive_notification(
-                async move |note: s::CancelNotification, _cx| {
-                    let _ = core_cancel.observed_tx.send(ObservedRequest::Cancelled {
-                        session_id: note.session_id.to_string(),
-                    });
-                    Ok(())
-                },
-                acp_sdk::on_receive_notification!(),
-            )
-            .connect_with(
-                agent_transport,
-                move |cx: acp_sdk::ConnectionTo<acp_sdk::Client>| async move {
-                    let mut crash = crash_rx;
-                    loop {
-                        if *crash.borrow_and_update() {
-                            break Ok::<_, acp_sdk::Error>(());
-                        }
-                        tokio::select! {
-                            changed = crash.changed() => {
-                                if changed.is_err() || *crash.borrow_and_update() {
-                                    break Ok(());
-                                }
-                            }
-                            _ = cx.incoming_closed() => break Ok(()),
-                        }
-                    }
-                },
-            )
-            .await;
-        if let Err(e) = result {
-            eprintln!("fake-agent ended: {e:?}");
-        }
-    });
+    let agent_transport = agent_client_protocol::ByteStreams::new(
+        testing_agent::compat_wrap(ac_agent_end),
+        testing_agent::compat_read(ca_agent_end),
+    );
+    let engine = testing_agent::connect_engine(script, agent_transport, "fake-agent", None);
 
     (
-        Harness {
-            observed_rx,
-            session_ids_rx,
-        },
-        Arc::new(std::sync::Mutex::new(Some(ClientEnds {
+        engine,
+        Arc::new(Mutex::new(Some(ClientEnds {
             out: ca_client_end,
             inn: ac_client_end,
         }))),
     )
 }
 
-fn observed_tx_for_core(
-    tx: &tokio::sync::mpsc::UnboundedSender<ObservedRequest>,
-) -> tokio::sync::mpsc::UnboundedSender<ObservedRequest> {
-    tx.clone()
+/// The client-side pipe halves, handed to the test connection factory (opaque
+/// transports are not Clone, so ends are stored raw and wrapped lazily).
+struct ClientEnds {
+    out: tokio::io::DuplexStream, // client writes here
+    inn: tokio::io::DuplexStream, // client reads here
 }
 
-// ── compat re-export aliases ─────────────────────────────────────────────────
-
-/// Local shims so this test crate reads symmetrically about both directions.
-fn compat_wrap<T: tokio::io::AsyncWrite + Unpin>(t: T) -> fxcore::driver::acp::CompatWrite<T> {
-    fxcore::driver::acp::compat_write(Some(t)).unwrap()
-}
-
-fn compat_read<T: tokio::io::AsyncRead + Unpin>(t: T) -> fxcore::driver::acp::CompatRead<T> {
-    fxcore::driver::acp::compat_read(Some(t)).unwrap()
+impl ClientEnds {
+    fn into_transport(
+        self,
+    ) -> impl agent_client_protocol::ConnectTo<agent_client_protocol::Client> + 'static {
+        agent_client_protocol::ByteStreams::new(
+            testing_agent::compat_wrap(self.out),
+            testing_agent::compat_read(self.inn),
+        )
+    }
 }
 
 // ── Tests: harness sanity (handshake gate — impl.md 4.3) ─────────────────────
 
 use fxcore::Orchestrator;
 use fxcore::config::Config;
+use fxcore::driver::acp as client_acp;
 use fxproto::command::Command;
 use fxproto::event::FxEvent;
 use fxproto::reply::Reply;

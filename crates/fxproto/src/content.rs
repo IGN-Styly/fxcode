@@ -155,7 +155,9 @@ mod tests {
         let file = ContentBlock::Resource {
             uri: "file:///src/main.rs".into(),
             media_type: "text/x-rust".into(),
-            contents: ResourceContents::Text { text: "fn main() {}".into() },
+            contents: ResourceContents::Text {
+                text: "fn main() {}".into(),
+            },
         };
         let json = serde_json::to_string(&file).unwrap();
         assert_eq!(
@@ -171,10 +173,15 @@ mod tests {
         let bin = ContentBlock::Resource {
             uri: "file:///a.bin".into(),
             media_type: "application/octet-stream".into(),
-            contents: ResourceContents::Blob { blob: "AAEC".into() },
+            contents: ResourceContents::Blob {
+                blob: "AAEC".into(),
+            },
         };
         let json = serde_json::to_string(&bin).unwrap();
-        assert!(json.contains(r#""contents":{"type":"blob","blob":"AAEC"}"#), "{json}");
+        assert!(
+            json.contains(r#""contents":{"type":"blob","blob":"AAEC"}"#),
+            "{json}"
+        );
         assert_eq!(serde_json::from_str::<ContentBlock>(&json).unwrap(), bin);
     }
 
