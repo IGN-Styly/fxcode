@@ -14,7 +14,7 @@ milestone are dependency-ordered so nothing is stubbed twice.
 
 *Everything else consumes these; they're pure and fully unit-testable.*
 
-- [ ] **0.1** `fxproto/src/ids.rs` — id newtypes + Seq. *Check: compiles; Display impls.*
+- [x] **0.1** `fxproto/src/ids.rs` — id newtypes + Seq. *Check: compiles; Display impls.*
 - [ ] **0.2** `fxproto/src/content.rs` — ContentBlock, Role, StopReason, Plan*, ToolCall*, McpServerSpec.
 - [ ] **0.3** `fxproto/src/driver.rs` — DriverId (+labels) and DriverSpec (+defaults).
 - [ ] **0.4** `fxproto/src/event.rs` — Sequenced<T>, FxEvent (incl. SessionCreated), AgentStatus, permission types.
