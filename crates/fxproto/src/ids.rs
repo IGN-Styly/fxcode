@@ -8,7 +8,9 @@
 //! - Display impls forward to inner value (nice for tracing/logs).
 macro_rules! string_id {
     ($name:ident) => {
-        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        // PartialOrd + Ord: BTreeMap keys in model projections (threads/agents
+        // keyed by uuid v7 ids, lexicographic == creation order).
+        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
         #[serde(transparent)]
         pub struct $name(String);
         impl $name {

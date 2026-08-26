@@ -52,12 +52,15 @@ pub mod agents;
 pub mod perms;
 pub mod threads;
 
-// TODO: re-export the public surface flat (exhaustive list — downstream crates use
-// both `fxproto::model::X` and these; adding a type means adding it here too):
-//
-// pub use self::agents::{AgentState, AgentsState, apply_agent};
-// pub use self::perms::{RECENT_CAP, PermsState, PendingPermission, ResolvedPermission, apply_perms};
-// pub use self::threads::{FlowItem, Message, PermOutcome, ThreadState, ThreadsState, ToolCall, apply_thread};
+// Re-exported public surface (exhaustive — adding a type means adding it here too;
+// downstream crates use both `fxproto::model::X` and these):
+pub use self::agents::{AgentState, AgentsState, apply_agent};
+pub use self::perms::{
+    RECENT_CAP, PendingPermission, PermsState, ResolvedPermission, apply_perms,
+};
+pub use self::threads::{
+    FlowItem, Message, PermOutcome, ThreadState, ThreadsState, ToolCall, apply_thread,
+};
 
 // TODO(tests — impl.md Phase 1.2; run with `cargo test -p fxproto`. Property style:
 // one checklist line = at least one test fn. Helpers: fresh default states; ev()
