@@ -135,14 +135,21 @@ fn ensure<'a>(
 /// react independently and never read each other's state.
 pub fn apply_thread(state: &mut ThreadsState, ev: &FxEvent) {
     match ev {
-        FxEvent::SessionCreated { session, cwd, mcp_servers, .. } => {
+        FxEvent::SessionCreated {
+            session,
+            cwd,
+            mcp_servers,
+            ..
+        } => {
             let ts = ensure(&mut state.threads, session, false);
             ts.cwd = cwd.clone();
             ts.mcp_servers = mcp_servers.clone();
         }
         FxEvent::TurnStarted { session, turn } => {
             let ts = ensure(&mut state.threads, session, true);
-            if let Some(existing) = &ts.active_turn && existing != turn {
+            if let Some(existing) = &ts.active_turn
+                && existing != turn
+            {
                 tracing::warn!(
                     session = %session,
                     existing = %existing,
@@ -152,20 +159,35 @@ pub fn apply_thread(state: &mut ThreadsState, ev: &FxEvent) {
             }
             ts.active_turn = Some(turn.clone());
         }
-        FxEvent::Chunk { session, role, text, .. } => {
+        FxEvent::Chunk {
+            session,
+            role,
+            text,
+            ..
+        } => {
             let ts = ensure(&mut state.threads, session, true);
-            let mergeable =
-                matches!(&ts.flow.last(), Some(FlowItem::Message(i)) if ts.messages[*i].role == *role);
+            let mergeable = matches!(&ts.flow.last(), Some(FlowItem::Message(i)) if ts.messages[*i].role == *role);
             if mergeable {
                 if let Some(FlowItem::Message(i)) = ts.flow.last() {
                     ts.messages[*i].text.push_str(text);
                 }
             } else {
-                ts.messages.push(Message { role: role.clone(), text: text.clone() });
+                ts.messages.push(Message {
+                    role: *role,
+                    text: text.clone(),
+                });
                 ts.flow.push(FlowItem::Message(ts.messages.len() - 1));
             }
         }
-        FxEvent::ToolCallUpsert { session, tool_call, title, kind, status, output, _meta } => {
+        FxEvent::ToolCallUpsert {
+            session,
+            tool_call,
+            title,
+            kind,
+            status,
+            output,
+            _meta,
+        } => {
             let ts = ensure(&mut state.threads, session, true);
             use std::collections::btree_map::Entry;
             match ts.tool_calls.entry(tool_call.clone()) {
@@ -195,7 +217,12 @@ pub fn apply_thread(state: &mut ThreadsState, ev: &FxEvent) {
             let ts = ensure(&mut state.threads, session, true);
             ts.plan = entries.clone();
         }
-        FxEvent::PermissionRequested { request_id, session, tool_call, .. } => {
+        FxEvent::PermissionRequested {
+            request_id,
+            session,
+            tool_call,
+            ..
+        } => {
             let ts = ensure(&mut state.threads, session, true);
             if ts
                 .pending_perm_tools

@@ -56,35 +56,40 @@ pub struct AgentState {
 ///   Nothing leaves Stopped/Crashed except via a NEW AgentId.
 pub fn apply_agent(state: &mut AgentsState, ev: &FxEvent) {
     match ev {
-        FxEvent::AgentStatus { agent, driver, status } => {
-            let entry = state.agents.entry(agent.clone()).or_insert_with(|| AgentState {
-                driver: driver.clone(),
-                status: status.clone(),
-                sessions: Vec::new(),
-            });
-            entry.driver = driver.clone();
+        FxEvent::AgentStatus {
+            agent,
+            driver,
+            status,
+        } => {
+            let entry = state
+                .agents
+                .entry(agent.clone())
+                .or_insert_with(|| AgentState {
+                    driver: *driver,
+                    status: status.clone(),
+                    sessions: Vec::new(),
+                });
+            entry.driver = *driver;
             entry.status = status.clone();
         }
-        FxEvent::SessionCreated { agent, session, .. } => {
-            match state.agents.get_mut(agent) {
-                Some(a) => {
-                    if a.sessions.contains(session) {
-                        tracing::debug!(
-                            agent = %a.driver.label(),
-                            session = %session,
-                            "duplicate SessionCreated; keeping original position"
-                        );
-                    } else {
-                        a.sessions.push(session.clone());
-                    }
+        FxEvent::SessionCreated { agent, session, .. } => match state.agents.get_mut(agent) {
+            Some(a) => {
+                if a.sessions.contains(session) {
+                    tracing::debug!(
+                        agent = %a.driver.label(),
+                        session = %session,
+                        "duplicate SessionCreated; keeping original position"
+                    );
+                } else {
+                    a.sessions.push(session.clone());
                 }
-                None => tracing::debug!(
-                    agent = %agent,
-                    session = %session,
-                    "SessionCreated for unknown agent; ignoring (no DriverId to synthesize)"
-                ),
             }
-        }
+            None => tracing::debug!(
+                agent = %agent,
+                session = %session,
+                "SessionCreated for unknown agent; ignoring (no DriverId to synthesize)"
+            ),
+        },
         _ => {}
     }
 }

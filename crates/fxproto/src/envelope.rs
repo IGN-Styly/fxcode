@@ -44,18 +44,36 @@ pub const PROTO_VERSION: u32 = 1;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Message {
     // handshake (client → server, then server → client once)
-    Hello { proto_version: u32, token: String },
-    Welcome { server_version: String, head_seq: Seq },
+    Hello {
+        proto_version: u32,
+        token: String,
+    },
+    Welcome {
+        server_version: String,
+        head_seq: Seq,
+    },
 
     // steady state
-    Request { id: u64, command: Command },
-    Response { id: u64, reply: Reply },
-    Event { event: Sequenced<FxEvent> },
+    Request {
+        id: u64,
+        command: Command,
+    },
+    Response {
+        id: u64,
+        reply: Reply,
+    },
+    Event {
+        event: Sequenced<FxEvent>,
+    },
 
     // resync (handshake only — see flow above; cmd dispatch rejects Command::Subscribe
     // defensively because subscription is envelope-level, not a Command)
-    Subscribe { last_seq: Seq },
-    SnapshotRequired { snapshot: Snapshot },
+    Subscribe {
+        last_seq: Seq,
+    },
+    SnapshotRequired {
+        snapshot: Snapshot,
+    },
 }
 
 /// Full projection dump for clients too far behind to replay cheaply. Concrete shape —
@@ -94,13 +112,26 @@ mod tests {
     fn every_frame_shape_is_pinned() {
         let agents = AgentsState::default();
         let mut threads = ThreadsState::default();
-        threads.threads.entry(SessionId::from_raw("s".into())).or_default();
-        threads.threads.get_mut(&SessionId::from_raw("s".into())).unwrap().cwd = PathBuf::from("/tmp");
+        threads
+            .threads
+            .entry(SessionId::from_raw("s".into()))
+            .or_default();
+        threads
+            .threads
+            .get_mut(&SessionId::from_raw("s".into()))
+            .unwrap()
+            .cwd = PathBuf::from("/tmp");
         let perms = PermsState::default();
 
         let frames: Vec<Message> = vec![
-            Message::Hello { proto_version: PROTO_VERSION, token: "tok".into() },
-            Message::Welcome { server_version: "0.1.0".into(), head_seq: Seq::new(4) },
+            Message::Hello {
+                proto_version: PROTO_VERSION,
+                token: "tok".into(),
+            },
+            Message::Welcome {
+                server_version: "0.1.0".into(),
+                head_seq: Seq::new(4),
+            },
             Message::Request {
                 id: 1,
                 command: Command::Prompt {
@@ -110,7 +141,9 @@ mod tests {
             },
             Message::Response {
                 id: 1,
-                reply: Reply::PromptAccepted { turn: TurnId::from_raw("t".into()) },
+                reply: Reply::PromptAccepted {
+                    turn: TurnId::from_raw("t".into()),
+                },
             },
             Message::Event {
                 event: Sequenced {
@@ -123,7 +156,9 @@ mod tests {
                     },
                 },
             },
-            Message::Subscribe { last_seq: Seq::new(2) },
+            Message::Subscribe {
+                last_seq: Seq::new(2),
+            },
             Message::SnapshotRequired {
                 snapshot: Snapshot {
                     baseline_seq: Seq::new(8),
@@ -135,7 +170,10 @@ mod tests {
         ];
         for msg in &frames {
             let json = serde_json::to_value(msg).unwrap();
-            assert!(json.get("type").and_then(|t| t.as_str()).is_some(), "{json}");
+            assert!(
+                json.get("type").and_then(|t| t.as_str()).is_some(),
+                "{json}"
+            );
             assert_eq!(
                 serde_json::from_value::<Message>(json.clone())
                     .and_then(|back| serde_json::to_string(&back))

@@ -55,9 +55,7 @@ pub mod threads;
 // Re-exported public surface (exhaustive — adding a type means adding it here too;
 // downstream crates use both `fxproto::model::X` and these):
 pub use self::agents::{AgentState, AgentsState, apply_agent};
-pub use self::perms::{
-    RECENT_CAP, PendingPermission, PermsState, ResolvedPermission, apply_perms,
-};
+pub use self::perms::{PendingPermission, PermsState, RECENT_CAP, ResolvedPermission, apply_perms};
 pub use self::threads::{
     FlowItem, Message, PermOutcome, ThreadState, ThreadsState, ToolCall, apply_thread,
 };
@@ -181,7 +179,11 @@ mod tests {
 
     // ---- event constructors ----------------------------------------------------
     fn status_ev(a: &str, status: AgentStatus) -> FxEvent {
-        FxEvent::AgentStatus { agent: agent(a), driver: DriverId::ClaudeCode, status }
+        FxEvent::AgentStatus {
+            agent: agent(a),
+            driver: DriverId::ClaudeCode,
+            status,
+        }
     }
     fn created_ev(s: &str, a: &str) -> FxEvent {
         FxEvent::SessionCreated {
@@ -192,10 +194,18 @@ mod tests {
         }
     }
     fn turn_started(s: &str, t: &str) -> FxEvent {
-        FxEvent::TurnStarted { session: session(s), turn: turn(t) }
+        FxEvent::TurnStarted {
+            session: session(s),
+            turn: turn(t),
+        }
     }
     fn chunk_ev(s: &str, r: Role, text: &str) -> FxEvent {
-        FxEvent::Chunk { session: session(s), turn: turn("t"), role: r, text: text.into() }
+        FxEvent::Chunk {
+            session: session(s),
+            turn: turn("t"),
+            role: r,
+            text: text.into(),
+        }
     }
     fn upsert_ev(s: &str, tc: &str, title: &str, st: ToolCallStatus) -> FxEvent {
         FxEvent::ToolCallUpsert {
@@ -209,13 +219,19 @@ mod tests {
         }
     }
     fn plan_ev(s: &str, entries: Vec<PlanEntry>) -> FxEvent {
-        FxEvent::PlanUpdated { session: session(s), entries }
+        FxEvent::PlanUpdated {
+            session: session(s),
+            entries,
+        }
     }
     fn perm_req(s: &str, tc: &str, r_id: &str) -> FxEvent {
         FxEvent::PermissionRequested {
             request_id: req(r_id),
             session: session(s),
-            tool_call: ToolCallSummary { tool_call: tool(tc), title: "t".into() },
+            tool_call: ToolCallSummary {
+                tool_call: tool(tc),
+                title: "t".into(),
+            },
             options: vec![PermissionOption {
                 option_id: opt("o"),
                 name: "Allow".into(),
@@ -224,7 +240,10 @@ mod tests {
         }
     }
     fn perm_resolved(r_id: &str, chosen: Option<&str>) -> FxEvent {
-        FxEvent::PermissionResolved { request_id: req(r_id), chosen: chosen.map(opt) }
+        FxEvent::PermissionResolved {
+            request_id: req(r_id),
+            chosen: chosen.map(opt),
+        }
     }
     fn finished(s: &str, t: &str) -> FxEvent {
         FxEvent::TurnFinished {
@@ -279,17 +298,24 @@ mod tests {
         apply_agent(&mut st, &status_ev("a", AgentStatus::Ready));
         apply_agent(&mut st, &status_ev("a", AgentStatus::Busy));
         apply_agent(&mut st, &status_ev("a", AgentStatus::Ready));
-        assert_eq!(st.agents.get(&agent("a")).unwrap().status, AgentStatus::Ready);
+        assert_eq!(
+            st.agents.get(&agent("a")).unwrap().status,
+            AgentStatus::Ready
+        );
     }
 
     #[test]
     fn a4_crashed_status_survives_serde_round_trip() {
-        let st = AgentStatus::Crashed { exit_code: Some(-9) };
+        let st = AgentStatus::Crashed {
+            exit_code: Some(-9),
+        };
         let json = serde_json::to_string(&st).unwrap();
         assert_eq!(json, r#"{"crashed":{"exit_code":-9}}"#);
         assert_eq!(
             serde_json::from_str::<AgentStatus>(&json).unwrap(),
-            AgentStatus::Crashed { exit_code: Some(-9) }
+            AgentStatus::Crashed {
+                exit_code: Some(-9)
+            }
         );
     }
 
@@ -299,7 +325,10 @@ mod tests {
         apply_agent(&mut st, &status_ev("a", AgentStatus::Starting));
         apply_agent(&mut st, &created_ev("s1", "a"));
         apply_agent(&mut st, &created_ev("s1", "a")); // duplicate
-        assert_eq!(st.agents.get(&agent("a")).unwrap().sessions, vec![session("s1")]);
+        assert_eq!(
+            st.agents.get(&agent("a")).unwrap().sessions,
+            vec![session("s1")]
+        );
     }
 
     #[test]
@@ -327,7 +356,10 @@ mod tests {
     fn a8_agents_state_serde_round_trip_is_byte_stable() {
         let mut populated = AgentsState::default();
         apply_agent(&mut populated, &status_ev("b", AgentStatus::Busy));
-        apply_agent(&mut populated, &status_ev("a", AgentStatus::Crashed { exit_code: None }));
+        apply_agent(
+            &mut populated,
+            &status_ev("a", AgentStatus::Crashed { exit_code: None }),
+        );
         apply_agent(&mut populated, &created_ev("s9", "b"));
         apply_agent(&mut populated, &created_ev("s1", "b"));
 
@@ -337,7 +369,10 @@ mod tests {
         // Determinism: identical reconstruction yields identical bytes.
         let mut rebuilt = AgentsState::default();
         apply_agent(&mut rebuilt, &status_ev("b", AgentStatus::Busy));
-        apply_agent(&mut rebuilt, &status_ev("a", AgentStatus::Crashed { exit_code: None }));
+        apply_agent(
+            &mut rebuilt,
+            &status_ev("a", AgentStatus::Crashed { exit_code: None }),
+        );
         apply_agent(&mut rebuilt, &created_ev("s9", "b"));
         apply_agent(&mut rebuilt, &created_ev("s1", "b"));
         assert_eq!(bytes_populated, serde_json::to_string(&rebuilt).unwrap());
@@ -361,7 +396,13 @@ mod tests {
         let mut st = ThreadsState::default();
         apply_thread(&mut st, &chunk_ev("s", Role::User, "hi"));
         let ts = thread(&st, &session("s"));
-        assert_eq!(ts.messages, vec![Message { role: Role::User, text: "hi".into() }]);
+        assert_eq!(
+            ts.messages,
+            vec![Message {
+                role: Role::User,
+                text: "hi".into()
+            }]
+        );
         assert_eq!(ts.flow, vec![FlowItem::Message(0)]);
     }
 
@@ -384,7 +425,10 @@ mod tests {
         apply_thread(&mut st, &chunk_ev("s", Role::Agent, "a2"));
         let ts = thread(&st, &session("s"));
         assert_eq!(
-            ts.messages.iter().map(|m| (m.role, m.text.as_str())).collect::<Vec<_>>(),
+            ts.messages
+                .iter()
+                .map(|m| (m.role, m.text.as_str()))
+                .collect::<Vec<_>>(),
             vec![(Role::User, "u1"), (Role::Agent, "a1a2")]
         );
     }
@@ -393,23 +437,35 @@ mod tests {
     fn t4_chunk_after_tool_does_not_merge_across_the_card() {
         let mut st = ThreadsState::default();
         apply_thread(&mut st, &chunk_ev("s", Role::Agent, "before"));
-        apply_thread(&mut st, &upsert_ev("s", "tc", "ls", ToolCallStatus::InProgress));
-        apply_thread(&mut st, &upsert_ev("s", "tc", "ls", ToolCallStatus::Completed));
+        apply_thread(
+            &mut st,
+            &upsert_ev("s", "tc", "ls", ToolCallStatus::InProgress),
+        );
+        apply_thread(
+            &mut st,
+            &upsert_ev("s", "tc", "ls", ToolCallStatus::Completed),
+        );
         apply_thread(&mut st, &chunk_ev("s", Role::Agent, "after"));
         let ts = thread(&st, &session("s"));
         // Same role as "before" but a Tool card sits between them in flow.last().
         assert_eq!(ts.messages.len(), 2);
-        assert_eq!(ts.flow, vec![
-            FlowItem::Message(0),
-            FlowItem::Tool(tool("tc")),
-            FlowItem::Message(1)
-        ]);
+        assert_eq!(
+            ts.flow,
+            vec![
+                FlowItem::Message(0),
+                FlowItem::Tool(tool("tc")),
+                FlowItem::Message(1)
+            ]
+        );
     }
 
     #[test]
     fn t5_tool_first_turn_starts_flow_with_tool_no_synthetic_message() {
         let mut st = ThreadsState::default();
-        apply_thread(&mut st, &upsert_ev("s", "tc", "grep", ToolCallStatus::InProgress));
+        apply_thread(
+            &mut st,
+            &upsert_ev("s", "tc", "grep", ToolCallStatus::InProgress),
+        );
         let ts = thread(&st, &session("s"));
         assert!(ts.messages.is_empty());
         assert_eq!(ts.flow, vec![FlowItem::Tool(tool("tc"))]);
@@ -418,15 +474,24 @@ mod tests {
     #[test]
     fn t6_upsert_twice_latest_fields_win_perm_preserved_one_flow_item() {
         let mut st = ThreadsState::default();
-        apply_thread(&mut st, &upsert_ev("s", "tc", "v1", ToolCallStatus::InProgress));
+        apply_thread(
+            &mut st,
+            &upsert_ev("s", "tc", "v1", ToolCallStatus::InProgress),
+        );
         apply_thread(&mut st, &perm_req("s", "tc", "r1"));
         apply_thread(&mut st, &perm_resolved("r1", Some("o")));
-        apply_thread(&mut st, &upsert_ev("s", "tc", "v2", ToolCallStatus::Completed));
+        apply_thread(
+            &mut st,
+            &upsert_ev("s", "tc", "v2", ToolCallStatus::Completed),
+        );
 
         let ts = thread(&st, &session("s"));
         assert_eq!(ts.tool_calls.len(), 1);
         let card = ts.tool_calls.get(&tool("tc")).unwrap();
-        assert_eq!((card.title.as_str(), card.status), ("v2", ToolCallStatus::Completed));
+        assert_eq!(
+            (card.title.as_str(), card.status),
+            ("v2", ToolCallStatus::Completed)
+        );
         // perm survives the wholesale overwrite (W3).
         assert_eq!(card.perm, Some(PermOutcome::Chosen(opt("o"))));
         assert_eq!(ts.flow, vec![FlowItem::Tool(tool("tc"))]);
@@ -435,15 +500,36 @@ mod tests {
     #[test]
     fn t7_two_tools_keep_first_appearance_order_under_late_updates() {
         let mut st = ThreadsState::default();
-        apply_thread(&mut st, &upsert_ev("s", "first", "a", ToolCallStatus::Pending));
-        apply_thread(&mut st, &upsert_ev("s", "second", "b", ToolCallStatus::Pending));
-        apply_thread(&mut st, &upsert_ev("s", "second", "b!", ToolCallStatus::Completed));
-        apply_thread(&mut st, &upsert_ev("s", "first", "a!", ToolCallStatus::Failed));
+        apply_thread(
+            &mut st,
+            &upsert_ev("s", "first", "a", ToolCallStatus::Pending),
+        );
+        apply_thread(
+            &mut st,
+            &upsert_ev("s", "second", "b", ToolCallStatus::Pending),
+        );
+        apply_thread(
+            &mut st,
+            &upsert_ev("s", "second", "b!", ToolCallStatus::Completed),
+        );
+        apply_thread(
+            &mut st,
+            &upsert_ev("s", "first", "a!", ToolCallStatus::Failed),
+        );
         let ts = thread(&st, &session("s"));
         assert_eq!(ts.tool_calls.len(), 2);
-        assert_eq!(ts.flow, vec![FlowItem::Tool(tool("first")), FlowItem::Tool(tool("second"))]);
+        assert_eq!(
+            ts.flow,
+            vec![
+                FlowItem::Tool(tool("first")),
+                FlowItem::Tool(tool("second"))
+            ]
+        );
         assert_eq!(ts.tool_calls[&tool("first")].status, ToolCallStatus::Failed);
-        assert_eq!(ts.tool_calls[&tool("second")].status, ToolCallStatus::Completed);
+        assert_eq!(
+            ts.tool_calls[&tool("second")].status,
+            ToolCallStatus::Completed
+        );
     }
 
     #[test]
@@ -500,7 +586,10 @@ mod tests {
     fn t12_resolution_maps_to_chosen_or_cancelled_and_drains_bridge() {
         // Chosen path.
         let mut chosen = ThreadsState::default();
-        apply_thread(&mut chosen, &upsert_ev("s", "tc", "t", ToolCallStatus::InProgress));
+        apply_thread(
+            &mut chosen,
+            &upsert_ev("s", "tc", "t", ToolCallStatus::InProgress),
+        );
         apply_thread(&mut chosen, &perm_req("s", "tc", "r1"));
         apply_thread(&mut chosen, &perm_resolved("r1", Some("o")));
         let card = thread(&chosen, &session("s")).tool_calls[&tool("tc")].clone();
@@ -512,7 +601,10 @@ mod tests {
 
         // Cancelled path (None).
         let mut cancelled = ThreadsState::default();
-        apply_thread(&mut cancelled, &upsert_ev("s", "tc", "t", ToolCallStatus::InProgress));
+        apply_thread(
+            &mut cancelled,
+            &upsert_ev("s", "tc", "t", ToolCallStatus::InProgress),
+        );
         apply_thread(&mut cancelled, &perm_req("s", "tc", "r1"));
         apply_thread(&mut cancelled, &perm_resolved("r1", None));
         let card = thread(&cancelled, &session("s")).tool_calls[&tool("tc")].clone();
@@ -534,7 +626,9 @@ mod tests {
         // Request arrives before any ToolCallUpsert: bridge recorded anyway.
         apply_thread(&mut st, &perm_req("s", "not_yet", "r1"));
         assert_eq!(
-            thread(&st, &session("s")).pending_perm_tools.get(&req("r1")),
+            thread(&st, &session("s"))
+                .pending_perm_tools
+                .get(&req("r1")),
             Some(&tool("not_yet"))
         );
         // Resolution lands while card absent → dropped silently, bridge drained.
@@ -556,13 +650,19 @@ mod tests {
                         ts.messages.len()
                     ),
                     FlowItem::Tool(id) => {
-                        assert!(ts.tool_calls.contains_key(id), "flow references missing card {id}")
+                        assert!(
+                            ts.tool_calls.contains_key(id),
+                            "flow references missing card {id}"
+                        )
                     }
                 }
             }
             // Every map entry has exactly one flow slot (W3 first-appearance push).
             assert_eq!(
-                ts.flow.iter().filter(|f| matches!(f, FlowItem::Tool(_))).count(),
+                ts.flow
+                    .iter()
+                    .filter(|f| matches!(f, FlowItem::Tool(_)))
+                    .count(),
                 ts.tool_calls.len(),
                 "flow/tool_calls desynced on {sid}"
             );
@@ -572,11 +672,14 @@ mod tests {
     /// Drain a few detached events through an empty state — exercised for totality
     /// and used to seed the fuzzer's variant space.
     fn drain_unrelated(mut st: ThreadsState) -> ThreadsState {
-        apply_thread(&mut st, &FxEvent::AgentStatus {
-            agent: agent("other"),
-            driver: DriverId::GeminiCli,
-            status: AgentStatus::Ready,
-        });
+        apply_thread(
+            &mut st,
+            &FxEvent::AgentStatus {
+                agent: agent("other"),
+                driver: DriverId::GeminiCli,
+                status: AgentStatus::Ready,
+            },
+        );
         st
     }
 
@@ -601,13 +704,17 @@ mod tests {
                     ToolCallStatus::InProgress,
                 ),
                 3 => perm_resolved(&format!("never{}", rng.pick(4)), Some("o")),
-                _ => turn_started(if si == 0 { "s0" } else { "s1" }, &format!("t{}", rng.pick(2))),
+                _ => turn_started(
+                    if si == 0 { "s0" } else { "s1" },
+                    &format!("t{}", rng.pick(2)),
+                ),
             };
             apply_thread(&mut st, &ev);
-            for si in 0..2 {
-                if let Some(ts) = st.threads.get(&session(if si == 0 { "s0" } else { "s1" })) {
-                    assert!(ts.messages.len() >= prev_len[si], "messages shrank");
-                    prev_len[si] = ts.messages.len();
+            let ids = [session("s0"), session("s1")];
+            for (i, sid) in ids.iter().enumerate() {
+                if let Some(ts) = st.threads.get(sid) {
+                    assert!(ts.messages.len() >= prev_len[i], "messages shrank");
+                    prev_len[i] = ts.messages.len();
                 }
             }
         }
@@ -621,12 +728,21 @@ mod tests {
         apply_thread(&mut st, &created_ev("sb", "ag"));
         apply_thread(&mut st, &chunk_ev("sb", Role::User, "hi "));
         apply_thread(&mut st, &chunk_ev("sb", Role::User, "there"));
-        apply_thread(&mut st, &upsert_ev("sb", "tc1", "ls", ToolCallStatus::Completed));
-        apply_thread(&mut st, &plan_ev("sb", vec![PlanEntry {
-            content: "only".into(),
-            status: PlanEntryStatus::Completed,
-            priority: Some(crate::content::PlanPriority::High),
-        }]));
+        apply_thread(
+            &mut st,
+            &upsert_ev("sb", "tc1", "ls", ToolCallStatus::Completed),
+        );
+        apply_thread(
+            &mut st,
+            &plan_ev(
+                "sb",
+                vec![PlanEntry {
+                    content: "only".into(),
+                    status: PlanEntryStatus::Completed,
+                    priority: Some(crate::content::PlanPriority::High),
+                }],
+            ),
+        );
         apply_thread(&mut st, &created_ev("sa", "ag")); // second session for key order
         apply_thread(&mut st, &perm_req("sa", "t", "rq"));
 
@@ -667,10 +783,27 @@ mod tests {
                 },
                 1 => created_ev(s, "ax"),
                 2 => turn_started(s, &format!("t{}", rng.pick(3))),
-                3 => chunk_ev(s, if rng.pick(2) == 0 { Role::User } else { Role::Agent }, "txt"),
-                4 => upsert_ev(s, &format!("tc{}", rng.pick(4)), "card", statuses[rng.pick(4)]),
+                3 => chunk_ev(
+                    s,
+                    if rng.pick(2) == 0 {
+                        Role::User
+                    } else {
+                        Role::Agent
+                    },
+                    "txt",
+                ),
+                4 => upsert_ev(
+                    s,
+                    &format!("tc{}", rng.pick(4)),
+                    "card",
+                    statuses[rng.pick(4)],
+                ),
                 5 => plan_ev(s, vec![]),
-                6 => perm_req(s, &format!("tc{}", rng.pick(4)), &format!("r{}", rng.pick(6))),
+                6 => perm_req(
+                    s,
+                    &format!("tc{}", rng.pick(4)),
+                    &format!("r{}", rng.pick(6)),
+                ),
                 7 => perm_resolved(&format!("r{}", rng.pick(6)), None),
                 _ => FxEvent::TurnFinished {
                     session: session(s),
@@ -689,7 +822,10 @@ mod tests {
     #[test]
     fn sequenced_inner_wiring_smoke() {
         // model folds take plain FxEvent refs; unwrap Sequenced at call sites.
-        let seqd = Sequenced { seq: Seq::new(1), inner: turn_started("s", "t") };
+        let seqd = Sequenced {
+            seq: Seq::new(1),
+            inner: turn_started("s", "t"),
+        };
         let mut st = ThreadsState::default();
         apply_thread(&mut st, &seqd.inner);
         assert_eq!(thread(&st, &session("s")).active_turn, Some(turn("t")));
@@ -715,7 +851,10 @@ mod tests {
         let latest = FxEvent::PermissionRequested {
             request_id: req("r1"),
             session: session("s2"),
-            tool_call: ToolCallSummary { tool_call: tool("zz"), title: "new".into() },
+            tool_call: ToolCallSummary {
+                tool_call: tool("zz"),
+                title: "new".into(),
+            },
             options: vec![],
         };
         apply_perms(&mut st, &latest);
@@ -760,8 +899,16 @@ mod tests {
             apply_perms(&mut st, &perm_resolved(&format!("r{i}"), None));
         }
         assert_eq!(st.recent.len(), RECENT_CAP);
-        assert_eq!(st.recent.front().unwrap().request_id, req("r10"), "oldest 10 evicted");
-        assert_eq!(st.recent.back().unwrap().request_id, req("r59"), "newest retained");
+        assert_eq!(
+            st.recent.front().unwrap().request_id,
+            req("r10"),
+            "oldest 10 evicted"
+        );
+        assert_eq!(
+            st.recent.back().unwrap().request_id,
+            req("r59"),
+            "newest retained"
+        );
         // Strict resolution order preserved front→back.
         for (pos, row) in st.recent.iter().enumerate() {
             let want = 10 + pos;

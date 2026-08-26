@@ -72,7 +72,12 @@ pub struct ResolvedPermission {
 /// One check covers unknown AND already-resolved (no expiry timestamps here).
 pub fn apply_perms(state: &mut PermsState, ev: &FxEvent) {
     match ev {
-        FxEvent::PermissionRequested { request_id, session, tool_call, options } => {
+        FxEvent::PermissionRequested {
+            request_id,
+            session,
+            tool_call,
+            options,
+        } => {
             if state.pending.contains_key(request_id) {
                 tracing::debug!(
                     request = %request_id,

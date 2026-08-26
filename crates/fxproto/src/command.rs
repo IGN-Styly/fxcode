@@ -72,7 +72,9 @@ mod tests {
     fn tags_are_snake_case_and_all_variants_round_trip() {
         let cmds: Vec<Command> = vec![
             Command::DetectAgents,
-            Command::StartAgent { driver: DriverId::ClaudeCode },
+            Command::StartAgent {
+                driver: DriverId::ClaudeCode,
+            },
             Command::NewSession {
                 agent: AgentId::from_raw("a".into()),
                 cwd: "/tmp/proj".into(),
@@ -82,7 +84,9 @@ mod tests {
                 session: SessionId::from_raw("s".into()),
                 blocks: vec![ContentBlock::Text { text: "hi".into() }],
             },
-            Command::Cancel { session: SessionId::from_raw("s".into()) },
+            Command::Cancel {
+                session: SessionId::from_raw("s".into()),
+            },
             Command::PermissionResponse {
                 request_id: RequestId::from_raw("r".into()),
                 option_id: OptionId::from_raw("o".into()),
@@ -92,9 +96,11 @@ mod tests {
             let json = serde_json::to_value(cmd).unwrap();
             let tag = json.get("type").and_then(|t| t.as_str()).expect("tagged");
             assert!(!tag.contains(' '), "snake_case tag: {tag}");
-            let back: Command =
-                serde_json::from_value(json).expect("round-trip");
-            assert_eq!(serde_json::to_string(&back).unwrap(), serde_json::to_string(cmd).unwrap());
+            let back: Command = serde_json::from_value(json).expect("round-trip");
+            assert_eq!(
+                serde_json::to_string(&back).unwrap(),
+                serde_json::to_string(cmd).unwrap()
+            );
         }
         assert_eq!(
             serde_json::to_string(&Command::DetectAgents).unwrap(),

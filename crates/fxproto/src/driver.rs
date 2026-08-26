@@ -71,12 +71,19 @@ impl DriverId {
         let (program, args) = match self {
             DriverId::ClaudeCode => (
                 "npx",
-                vec!["-y".to_string(), "@agentclientprotocol/claude-agent-acp".to_string()],
+                vec![
+                    "-y".to_string(),
+                    "@agentclientprotocol/claude-agent-acp".to_string(),
+                ],
             ),
             DriverId::GeminiCli => ("gemini", vec!["--acp".to_string()]),
             DriverId::CodexCli => ("codex-acp", Vec::new()),
         };
-        DriverSpec { program: program.into(), args, env: BTreeMap::new() }
+        DriverSpec {
+            program: program.into(),
+            args,
+            env: BTreeMap::new(),
+        }
     }
 }
 

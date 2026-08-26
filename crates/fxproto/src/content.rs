@@ -126,7 +126,10 @@ mod tests {
             data: "AAAA".into(),
         })
         .unwrap();
-        assert_eq!(img, r#"{"type":"image","media_type":"image/png","data":"AAAA"}"#);
+        assert_eq!(
+            img,
+            r#"{"type":"image","media_type":"image/png","data":"AAAA"}"#
+        );
     }
 
     #[test]
@@ -146,7 +149,10 @@ mod tests {
                 serde_json::to_string(&StopReason::MaxTurnRequests).unwrap(),
                 "\"max_turn_requests\"",
             ),
-            (serde_json::to_string(&StopReason::Refusal).unwrap(), "\"refusal\""),
+            (
+                serde_json::to_string(&StopReason::Refusal).unwrap(),
+                "\"refusal\"",
+            ),
             (
                 serde_json::to_string(&StopReason::Cancelled).unwrap(),
                 "\"cancelled\"",

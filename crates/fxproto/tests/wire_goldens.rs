@@ -22,9 +22,7 @@ use fxproto::envelope::{Message, PROTO_VERSION};
 use fxproto::event::{
     AgentStatus, FxEvent, PermissionOption, PermissionOptionKind, Sequenced, ToolCallSummary,
 };
-use fxproto::ids::{
-    AgentId, OptionId, RequestId, Seq, SessionId, ToolCallId, TurnId,
-};
+use fxproto::ids::{AgentId, OptionId, RequestId, Seq, SessionId, ToolCallId, TurnId};
 use fxproto::model::{PermsState, ThreadsState};
 use fxproto::reply::{DetectedDriver, FxError, FxErrorCode, Reply};
 
@@ -61,11 +59,16 @@ fn ids_are_bare_strings() {
 #[test]
 fn content_blocks() {
     rt(
-        ContentBlock::Text { text: "hello world".into() },
+        ContentBlock::Text {
+            text: "hello world".into(),
+        },
         r#"{"type":"text","text":"hello world"}"#,
     );
     rt(
-        ContentBlock::Image { media_type: "image/png".into(), data: "iVBORw==".into() },
+        ContentBlock::Image {
+            media_type: "image/png".into(),
+            data: "iVBORw==".into(),
+        },
         r#"{"type":"image","media_type":"image/png","data":"iVBORw=="}"#,
     );
 }
@@ -101,11 +104,19 @@ fn mcp_server_spec_env_ordering_is_byte_stable() {
 #[test]
 fn plan_entries_round_trip_with_optional_priority() {
     rt(
-        PlanEntry { content: "write fold".into(), status: PlanEntryStatus::InProgress, priority: Some(PlanPriority::High) },
+        PlanEntry {
+            content: "write fold".into(),
+            status: PlanEntryStatus::InProgress,
+            priority: Some(PlanPriority::High),
+        },
         r#"{"content":"write fold","status":"in_progress","priority":"high"}"#,
     );
     rt(
-        PlanEntry { content: "shrink".into(), status: PlanEntryStatus::Pending, priority: None },
+        PlanEntry {
+            content: "shrink".into(),
+            status: PlanEntryStatus::Pending,
+            priority: None,
+        },
         r#"{"content":"shrink","status":"pending","priority":null}"#,
     );
 }
@@ -148,7 +159,9 @@ fn golden_agent_status_event() {
         FxEvent::AgentStatus {
             agent: AgentId::from_raw("a".into()),
             driver: DriverId::GeminiCli,
-            status: AgentStatus::Crashed { exit_code: Some(-9) },
+            status: AgentStatus::Crashed {
+                exit_code: Some(-9),
+            },
         },
         r#"{"type":"agent_status","agent":"a","driver":"gemini_cli","status":{"crashed":{"exit_code":-9}}}"#,
     );
@@ -165,7 +178,10 @@ fn golden_agent_status_event() {
 #[test]
 fn golden_turn_lifecycle_events() {
     rt(
-        FxEvent::TurnStarted { session: SessionId::from_raw("s".into()), turn: TurnId::from_raw("t1".into()) },
+        FxEvent::TurnStarted {
+            session: SessionId::from_raw("s".into()),
+            turn: TurnId::from_raw("t1".into()),
+        },
         r#"{"type":"turn_started","session":"s","turn":"t1"}"#,
     );
     rt(
@@ -209,8 +225,16 @@ fn golden_plan_updated_replaces_wholesale() {
         FxEvent::PlanUpdated {
             session: SessionId::from_raw("s".into()),
             entries: vec![
-                PlanEntry { content: "one".into(), status: PlanEntryStatus::Completed, priority: None },
-                PlanEntry { content: "two".into(), status: PlanEntryStatus::Pending, priority: Some(PlanPriority::Low) },
+                PlanEntry {
+                    content: "one".into(),
+                    status: PlanEntryStatus::Completed,
+                    priority: None,
+                },
+                PlanEntry {
+                    content: "two".into(),
+                    status: PlanEntryStatus::Pending,
+                    priority: Some(PlanPriority::Low),
+                },
             ],
         },
         r#"{"type":"plan_updated","session":"s","entries":[{"content":"one","status":"completed","priority":null},{"content":"two","status":"pending","priority":"low"}]}"#,
@@ -223,7 +247,10 @@ fn golden_permission_events() {
         FxEvent::PermissionRequested {
             request_id: RequestId::from_raw("r1".into()),
             session: SessionId::from_raw("s".into()),
-            tool_call: ToolCallSummary { tool_call: ToolCallId::from_raw("tc2".into()), title: "rm -rf /tmp/x".into() },
+            tool_call: ToolCallSummary {
+                tool_call: ToolCallId::from_raw("tc2".into()),
+                title: "rm -rf /tmp/x".into(),
+            },
             options: vec![
                 PermissionOption {
                     option_id: OptionId::from_raw("opt_allow".into()),
@@ -252,7 +279,10 @@ fn golden_permission_events() {
     );
     // chosen: null == cancelled sweep — audit fact, must not be lost.
     rt(
-        FxEvent::PermissionResolved { request_id: RequestId::from_raw("r2".into()), chosen: None },
+        FxEvent::PermissionResolved {
+            request_id: RequestId::from_raw("r2".into()),
+            chosen: None,
+        },
         r#"{"type":"permission_resolved","request_id":"r2","chosen":null}"#,
     );
 }
@@ -284,7 +314,9 @@ fn golden_session_created() {
 fn golden_commands() {
     rt(Command::DetectAgents, r#"{"type":"detect_agents"}"#);
     rt(
-        Command::StartAgent { driver: DriverId::CodexCli },
+        Command::StartAgent {
+            driver: DriverId::CodexCli,
+        },
         r#"{"type":"start_agent","driver":"codex_cli"}"#,
     );
     rt(
@@ -298,12 +330,16 @@ fn golden_commands() {
     rt(
         Command::Prompt {
             session: SessionId::from_raw("s".into()),
-            blocks: vec![ContentBlock::Text { text: "ship it".into() }],
+            blocks: vec![ContentBlock::Text {
+                text: "ship it".into(),
+            }],
         },
         r#"{"type":"prompt","session":"s","blocks":[{"type":"text","text":"ship it"}]}"#,
     );
     rt(
-        Command::Cancel { session: SessionId::from_raw("s".into()) },
+        Command::Cancel {
+            session: SessionId::from_raw("s".into()),
+        },
         r#"{"type":"cancel","session":"s"}"#,
     );
     rt(
@@ -320,41 +356,58 @@ fn golden_commands() {
 #[test]
 fn golden_replies() {
     rt(
-        Reply::DetectedAgents { drivers: vec![
-            DetectedDriver {
-                driver: DriverId::ClaudeCode,
-                found: true,
-                version: Some("4.5".into()),
-                spec_used: DriverId::ClaudeCode.default_spec(),
-            },
-            DetectedDriver {
-                driver: DriverId::CodexCli,
-                found: false,
-                version: None,
-                spec_used: DriverId::CodexCli.default_spec(),
-            },
-        ] },
+        Reply::DetectedAgents {
+            drivers: vec![
+                DetectedDriver {
+                    driver: DriverId::ClaudeCode,
+                    found: true,
+                    version: Some("4.5".into()),
+                    spec_used: DriverId::ClaudeCode.default_spec(),
+                },
+                DetectedDriver {
+                    driver: DriverId::CodexCli,
+                    found: false,
+                    version: None,
+                    spec_used: DriverId::CodexCli.default_spec(),
+                },
+            ],
+        },
         concat!(
             r#"{"type":"detected_agents","drivers":[{"driver":"claude_code","found":true,"version":"4.5","#,
             r#""spec_used":{"program":"npx","args":["-y","@agentclientprotocol/claude-agent-acp"],"env":{}}},"#,
             r#"{"driver":"codex_cli","found":false,"version":null,"spec_used":{"program":"codex-acp","args":[],"env":{}}}]}"#,
         ),
     );
-    rt(Reply::Started { agent: AgentId::from_raw("a".into()) }, r#"{"type":"started","agent":"a"}"#);
     rt(
-        Reply::SessionCreated { session: SessionId::from_raw("s".into()) },
+        Reply::Started {
+            agent: AgentId::from_raw("a".into()),
+        },
+        r#"{"type":"started","agent":"a"}"#,
+    );
+    rt(
+        Reply::SessionCreated {
+            session: SessionId::from_raw("s".into()),
+        },
         // Same snake_case tag as FxEvent::SessionCreated — unambiguous because it
         // only ever rides inside a Response frame.
         r#"{"type":"session_created","session":"s"}"#,
     );
     rt(
-        Reply::PromptAccepted { turn: TurnId::from_raw("t".into()) },
+        Reply::PromptAccepted {
+            turn: TurnId::from_raw("t".into()),
+        },
         r#"{"type":"prompt_accepted","turn":"t"}"#,
     );
     rt(Reply::Cancelled, r#"{"type":"cancelled"}"#);
-    rt(Reply::PermissionRecorded, r#"{"type":"permission_recorded"}"#);
     rt(
-        Reply::Error(FxError { code: FxErrorCode::TurnNotActive, message: "no active turn".into() }),
+        Reply::PermissionRecorded,
+        r#"{"type":"permission_recorded"}"#,
+    );
+    rt(
+        Reply::Error(FxError {
+            code: FxErrorCode::TurnNotActive,
+            message: "no active turn".into(),
+        }),
         r#"{"type":"error","code":"turn_not_active","message":"no active turn"}"#,
     );
 }
@@ -364,26 +417,42 @@ fn golden_replies() {
 #[test]
 fn golden_handshake_frames() {
     rt(
-        Message::Hello { proto_version: PROTO_VERSION, token: "hex-token".into() },
+        Message::Hello {
+            proto_version: PROTO_VERSION,
+            token: "hex-token".into(),
+        },
         r#"{"type":"hello","proto_version":1,"token":"hex-token"}"#,
     );
     rt(
-        Message::Welcome { server_version: "fxcode 0.1.0".into(), head_seq: Seq::new(17) },
+        Message::Welcome {
+            server_version: "fxcode 0.1.0".into(),
+            head_seq: Seq::new(17),
+        },
         r#"{"type":"welcome","server_version":"fxcode 0.1.0","head_seq":17}"#,
     );
-    rt(Message::Subscribe { last_seq: Seq::new(0) }, r#"{"type":"subscribe","last_seq":0}"#);
+    rt(
+        Message::Subscribe {
+            last_seq: Seq::new(0),
+        },
+        r#"{"type":"subscribe","last_seq":0}"#,
+    );
 }
 
 #[test]
 fn golden_request_response_correlation() {
     rt(
-        Message::Request { id: 7, command: Command::DetectAgents },
+        Message::Request {
+            id: 7,
+            command: Command::DetectAgents,
+        },
         r#"{"type":"request","id":7,"command":{"type":"detect_agents"}}"#,
     );
     rt(
         Message::Response {
             id: 7,
-            reply: Reply::PromptAccepted { turn: TurnId::from_raw("t".into()) },
+            reply: Reply::PromptAccepted {
+                turn: TurnId::from_raw("t".into()),
+            },
         },
         r#"{"type":"response","id":7,"reply":{"type":"prompt_accepted","turn":"t"}}"#,
     );
@@ -408,7 +477,10 @@ fn golden_event_frame_wraps_sequenced_inner() {
 #[test]
 fn golden_snapshot_serializes_byte_stably_and_round_trips() {
     let mut threads = ThreadsState::default();
-    threads.threads.entry(SessionId::from_raw("s2".into())).or_default();
+    threads
+        .threads
+        .entry(SessionId::from_raw("s2".into()))
+        .or_default();
     let snap = fxproto::envelope::Snapshot {
         baseline_seq: Seq::new(30),
         agents: Default::default(),

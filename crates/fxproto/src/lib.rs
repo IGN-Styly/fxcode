@@ -33,14 +33,13 @@ pub mod reply;
 pub mod prelude {
     pub use crate::command::Command;
     pub use crate::content::{
-        ContentBlock, McpServerSpec, PlanEntry, PlanEntryStatus, PlanPriority, Role,
-        StopReason, ToolCallKind, ToolCallStatus,
+        ContentBlock, McpServerSpec, PlanEntry, PlanEntryStatus, PlanPriority, Role, StopReason,
+        ToolCallKind, ToolCallStatus,
     };
     pub use crate::driver::{DriverId, DriverSpec};
-    pub use crate::envelope::{Message, Snapshot, PROTO_VERSION};
+    pub use crate::envelope::{Message, PROTO_VERSION, Snapshot};
     pub use crate::event::{
-        AgentStatus, FxEvent, PermissionOption, PermissionOptionKind, Sequenced,
-        ToolCallSummary,
+        AgentStatus, FxEvent, PermissionOption, PermissionOptionKind, Sequenced, ToolCallSummary,
     };
     pub use crate::ids::{AgentId, OptionId, RequestId, Seq, SessionId, ToolCallId, TurnId};
     pub use crate::reply::{DetectedDriver, FxError, FxErrorCode, Reply};

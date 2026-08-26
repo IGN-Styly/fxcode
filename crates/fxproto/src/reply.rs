@@ -33,9 +33,9 @@ pub enum FxErrorCode {
     SessionNotFound,    // Prompt/Cancel for unknown session (projection says so)
     TurnNotActive,      // Cancel with no running turn; Prompt while turn in flight
     PermissionNotFound, // PermissionResponse for unknown/expired request_id
-                        // (cmd/perms.rs respond() demands exactly this)
-    StoreFailure,       // event store append/replay failed
-    Internal,           // catch-all; message carries detail, never panic across wire
+    // (cmd/perms.rs respond() demands exactly this)
+    StoreFailure, // event store append/replay failed
+    Internal,     // catch-all; message carries detail, never panic across wire
 }
 //     NOTE no CursorTooOld code: cursor staleness never round-trips as a Reply — the
 //     gap policy lives at handshake time and answers with envelope::Message::
@@ -72,13 +72,21 @@ impl FxErrorCode {
 pub enum Reply {
     /// DetectAgents result. found:false rows are data (drives install-hint UI),
     /// not errors.
-    DetectedAgents { drivers: Vec<DetectedDriver> },
-    Started { agent: AgentId },            // ← StartAgent
-    SessionCreated { session: SessionId }, // ← NewSession; cwd/mcp ride FxEvent::SessionCreated
-    PromptAccepted { turn: TurnId },       // ← Prompt; actual results arrive as FxEvents
-    Cancelled,                             // ← Cancel (ack; TurnFinished arrives separately)
-    PermissionRecorded,                    // ← PermissionResponse
-    Error(FxError),                        // any command may fail this way
+    DetectedAgents {
+        drivers: Vec<DetectedDriver>,
+    },
+    Started {
+        agent: AgentId,
+    }, // ← StartAgent
+    SessionCreated {
+        session: SessionId,
+    }, // ← NewSession; cwd/mcp ride FxEvent::SessionCreated
+    PromptAccepted {
+        turn: TurnId,
+    }, // ← Prompt; actual results arrive as FxEvents
+    Cancelled,          // ← Cancel (ack; TurnFinished arrives separately)
+    PermissionRecorded, // ← PermissionResponse
+    Error(FxError),     // any command may fail this way
 }
 //     NO Subscribed variant: subscribing happens at the envelope/handshake layer
 //     (envelope::Message::Subscribe → replay → live attach); head_seq already reaches

@@ -9,11 +9,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::content::{
-    McpServerSpec, PlanEntry, Role, StopReason, ToolCallKind, ToolCallStatus,
-};
+use crate::content::{McpServerSpec, PlanEntry, Role, StopReason, ToolCallKind, ToolCallStatus};
 use crate::driver::DriverId;
-use crate::ids::{AgentId, OptionId, RequestId, SessionId, Seq, ToolCallId, TurnId};
+use crate::ids::{AgentId, OptionId, RequestId, Seq, SessionId, ToolCallId, TurnId};
 
 /// Event + its global order stamp. Semantics pinned here (store + bus rely on them):
 /// - `seq` is assigned by EventStore::append at persist time (fxcore/src/store), never
@@ -34,13 +32,25 @@ pub struct Sequenced<T> {
 pub enum FxEvent {
     /// Agent process lifecycle. Carries `driver` so the agents fold can construct a
     /// brand-new AgentState entry (first sight of this agent) without guessing.
-    AgentStatus { agent: AgentId, driver: DriverId, status: AgentStatus },
+    AgentStatus {
+        agent: AgentId,
+        driver: DriverId,
+        status: AgentStatus,
+    },
 
-    TurnStarted { session: SessionId, turn: TurnId },
+    TurnStarted {
+        session: SessionId,
+        turn: TurnId,
+    },
     /// Streaming text for the transcript. role=User chunks echo what was sent.
     /// See "chunk vs blocks" decision at the bottom of this file for how ContentBlocks
     /// flatten into `text`.
-    Chunk { session: SessionId, turn: TurnId, role: Role, text: String },
+    Chunk {
+        session: SessionId,
+        turn: TurnId,
+        role: Role,
+        text: String,
+    },
     /// Upsert keyed by tool_call — UI replaces in place, never appends duplicates.
     ToolCallUpsert {
         session: SessionId,
@@ -53,7 +63,10 @@ pub enum FxEvent {
         /// why FxEvent itself derives only PartialEq-free Debug/Clone/SD.
         _meta: Option<Value>,
     },
-    PlanUpdated { session: SessionId, entries: Vec<PlanEntry> },
+    PlanUpdated {
+        session: SessionId,
+        entries: Vec<PlanEntry>,
+    },
 
     /// Agent asked permission. Server parks the ACP request under `request_id`.
     PermissionRequested {
@@ -63,9 +76,16 @@ pub enum FxEvent {
         options: Vec<PermissionOption>,
     },
     /// Recorded so late-joining clients see the resolution too.
-    PermissionResolved { request_id: RequestId, chosen: Option<OptionId> }, // None = cancelled
+    PermissionResolved {
+        request_id: RequestId,
+        chosen: Option<OptionId>,
+    }, // None = cancelled
 
-    TurnFinished { session: SessionId, turn: TurnId, stop_reason: StopReason },
+    TurnFinished {
+        session: SessionId,
+        turn: TurnId,
+        stop_reason: StopReason,
+    },
     /// Emitted when NewSession command succeeds. THE record that a session exists —
     /// without it, replays can't rebuild the agent→sessions list. Carries everything
     /// session/new established (replaces an earlier "McpAttached" idea — one event,
@@ -149,7 +169,9 @@ mod tests {
             FxEvent::AgentStatus {
                 agent: AgentId::from_raw("a".into()),
                 driver: DriverId::CodexCli,
-                status: AgentStatus::Crashed { exit_code: Some(-9) },
+                status: AgentStatus::Crashed {
+                    exit_code: Some(-9),
+                },
             },
             FxEvent::TurnStarted {
                 session: SessionId::from_raw("s".into()),
@@ -177,7 +199,10 @@ mod tests {
             FxEvent::PermissionRequested {
                 request_id: RequestId::from_raw("r".into()),
                 session: SessionId::from_raw("s".into()),
-                tool_call: ToolCallSummary { tool_call: ToolCallId::from_raw("tc".into()), title: "ls".into() },
+                tool_call: ToolCallSummary {
+                    tool_call: ToolCallId::from_raw("tc".into()),
+                    title: "ls".into(),
+                },
                 options: vec![PermissionOption {
                     option_id: OptionId::from_raw("o".into()),
                     name: "Allow once".into(),
@@ -219,7 +244,15 @@ mod tests {
         // default EXTERNAL tagging: {"crashed": {...}} / bare "ready" for units.
         let json = r#"{"crashed":{"exit_code":-9}}"#;
         let st: AgentStatus = serde_json::from_str(json).unwrap();
-        assert_eq!(st, AgentStatus::Crashed { exit_code: Some(-9) });
-        assert_eq!(serde_json::to_string(&AgentStatus::Ready).unwrap(), "\"ready\"");
+        assert_eq!(
+            st,
+            AgentStatus::Crashed {
+                exit_code: Some(-9)
+            }
+        );
+        assert_eq!(
+            serde_json::to_string(&AgentStatus::Ready).unwrap(),
+            "\"ready\""
+        );
     }
 }
