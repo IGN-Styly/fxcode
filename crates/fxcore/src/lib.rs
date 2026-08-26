@@ -30,22 +30,17 @@ pub mod orchestrator;
 pub mod proj;
 pub mod store;
 
-// TODO: facade re-exports — the COMPLETE list of what fxserver/tests may name
+// Facade re-exports — the COMPLETE list of what fxserver/tests may name
 // without a module path. Anything not here is intentionally internal; adding to
 // this list is the only way a type becomes public API.
-//
-pub use bus::{BusError, BusReceiver, EventBus, BUS_CAPACITY};
-//       (fxserver pairs its per-client out-channel cap against BUS_CAPACITY by
-//        importing it — net/client.rs — instead of hardcoding 1024 twice.)
-//   pub use config::{Config, ConfigError};
-//   pub use orchestrator::Orchestrator;
+
+pub use bus::{BUS_CAPACITY, BusError, BusReceiver, EventBus};
+pub use config::{Config, ConfigError};
+pub use orchestrator::Orchestrator;
 pub use store::EventStore;
 pub use store::sqlite::SqliteStore; // integration tests open real tempdir stores
 //
-// Crate-root error type (defined below in this file) is implicitly part of the
-// facade via its own `pub use`:
-//
-//   pub use crate::Error;
+// Crate-root error type (defined below) is implicitly part of the facade:
 //
 // Reachable-but-not-re-exported (intentional middle ground): everything under
 // `pub mod`s that internal seams need by path but consumers shouldn't bare-name:
@@ -58,36 +53,34 @@ pub use store::sqlite::SqliteStore; // integration tests open real tempdir store
 //   `Orchestrator::projection_snapshot()` (envelope::Snapshot building).
 // - `ids::IdGen`: exactly one instance lives inside Orchestrator. Still PUBLIC
 //   by path (`fxcore::ids::IdGen`) because tests inject deterministic gens via
-//   `Orchestrator::new_with_ids` and ids.rs carries a compile_fail doctest —
-//   both need the path — but no root re-export so nobody casual imports it.
+//   `Orchestrator::new_with_ids`.
 //
-// TODO: top-level error type. thiserror enum at the crate root. Handlers return
+// Top-level error type. thiserror enum at the crate root. Handlers return
 // Result<Reply, Self>; Orchestrator::execute converts Err → Reply::Error(FxError)
 // at exactly ONE site (fxproto/reply.rs contract). Wire outcomes that are DATA
 // (AgentNotFound, SessionNotFound, TurnNotActive, PermissionNotFound,
 // AgentStartFailed-as-reply) are constructed by handlers as Reply::Error DIRECTLY
 // and never appear as variants here — this enum is infrastructure failures only.
-//
-//   #[derive(Debug, thiserror::Error)]
-//   pub enum Error {
-//       /// Config missing/unparsable. Fatal at boot, before any client exists —
-//       /// never crosses the wire. (fxserver logs it and exits nonzero.)
-//       #[error("config: {0}")]
-//       Config(#[from] config::ConfigError),
-//       /// Spawning/initializing an agent process failed. Detail string carries the
-//       /// program + OS error. Converts to FxErrorCode::AgentStartFailed.
-//       #[error("agent spawn failed: {0}")]
-//       AgentStart(String),
-//       /// ACP connection broke mid-operation (child died, protocol violation).
-//       /// During StartAgent → AgentStartFailed; mid-turn it becomes
-//       /// TurnFinished{stop_reason: cancelled} + AgentStatus::Crashed events
-//       /// emitted by the turn task, not an Err.
-//       #[error("acp connection: {0}")]
-//       Acp(String),
-//       /// Event store append/replay/open failure. → FxErrorCode::StoreFailure.
-//       #[error(transparent)]
-//       Store(#[from] store::StoreError),
-//       /// execute() raced shutdown (actor gone or stopping). → FxErrorCode::Internal.
-//       #[error("orchestrator is shutting down")]
-//       ShuttingDown,
-//   }
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    /// Config missing/unparsable. Fatal at boot, before any client exists —
+    /// never crosses the wire. (fxserver logs it and exits nonzero.)
+    #[error("config: {0}")]
+    Config(#[from] config::ConfigError),
+    /// Spawning/initializing an agent process failed. Detail string carries the
+    /// program + OS error. Converts to FxErrorCode::AgentStartFailed.
+    #[error("agent spawn failed: {0}")]
+    AgentStart(String),
+    /// ACP connection broke mid-operation (child died, protocol violation).
+    /// During StartAgent → AgentStartFailed; mid-turn it becomes
+    /// TurnFinished{stop_reason: cancelled} + AgentStatus::Crashed events
+    /// emitted by the turn task, not an Err.
+    #[error("acp connection: {0}")]
+    Acp(String),
+    /// Event store append/replay/open failure. → FxErrorCode::StoreFailure.
+    #[error(transparent)]
+    Store(#[from] store::StoreError),
+    /// execute() raced shutdown (actor gone or stopping). → FxErrorCode::Internal.
+    #[error("orchestrator is shutting down")]
+    ShuttingDown,
+}
