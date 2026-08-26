@@ -25,14 +25,14 @@
 //   Seq        NOT an id we mint at all: stamped exclusively by EventStore::append
 //              (single SQLite AUTOINCREMENT source of truth). See RULES below.
 //
-// ALGORITHM (minted ids only): uuid v7 (uuid crate, features = ["v7"]) — time-ordered so
+// ALGORITHM (minted ids only): uuid v7 (druid crate) — time-ordered so
 // log/BTreeMap iteration reads chronologically, and stateless (no generator struct needed
-// in production code paths). The uuid dep lives in fxcore, NOT here (see Cargo.toml rule).
+// in production code paths). The druid dep lives in fxcore, NOT here (see Cargo.toml rule).
 //
 // RULES:
 // - Generation NEVER happens in fxproto. Constructors take Strings, validate nothing,
 //   trust the caller (server assigns; clients treat ids as opaque).
-// - The uuid crate must NOT be added to fxproto's Cargo.toml: this crate is pure serde
+// - The druid crate must NOT be added to fxproto's Cargo.toml: this crate is pure serde
 //   types; minting is fxcore's job (crates/fxcore/src/ids.rs IdGen).
 
 // TODO: define the six id newtypes (all EXACTLY this shape):
@@ -41,6 +41,27 @@
 // #[serde(transparent)] // bare string on the wire, no {"AgentId": ...}
 // pub struct AgentId(String);
 //     ...same pattern for SessionId, TurnId, ToolCallId, RequestId, OptionId.
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AgentId(String);
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SessionId(String);
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TurnId(String);
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ToolCallId(String);
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RequestId(String);
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct OptionId(String);
 
 // Uniform API per id type (private inner field keeps clients from fabricating ids
 // by accident while still allowing reads for ACP calls and logging):
