@@ -62,11 +62,11 @@ milestone are dependency-ordered so nothing is stubbed twice.
 
 ## Phase 5 — Daemon (fxserver)
 
-- [ ] **5.1** `pair.rs` token lifecycle + `ifaddr.rs` addr picking (+ classify() unit test).
-- [ ] **5.2** `main.rs` boot chain + graceful shutdown (children killed).
-- [ ] **5.3** `net/handshake.rs` (version, constant-time token, replay/snapshot branch) +
+- [x] **5.1** `pair.rs` token lifecycle + `ifaddr.rs` addr picking (+ classify() unit test).
+- [x] **5.2** `main.rs` boot chain + graceful shutdown (children killed).
+- [x] **5.3** `net/handshake.rs` (version, constant-time token, replay/snapshot branch) +
   `net/client.rs` task pair.
-- [ ] **5.4** End-to-end: script a ws client against running fxserver — auth fail, auth ok,
+- [x] **5.4** End-to-end: script a ws client against running fxserver — auth fail, auth ok,
   Subscribe replay. *Check: manual curl/websocat or a small rust test.*
 
 ## Phase 6 — Client spine (fxapp)
