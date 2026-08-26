@@ -40,24 +40,24 @@ milestone are dependency-ordered so nothing is stubbed twice.
 
 ## Phase 3 — Server core wiring (fxcore)
 
-- [ ] **3.1** `config.rs` — Config::load + defaults + data_dir creation.
-- [ ] **3.2** `cmd/mod.rs` EventSink (append→project→broadcast pump) + dispatch skeleton;
+- [x] **3.1** `config.rs` — Config::load + defaults + data_dir creation.
+- [x] **3.2** `cmd/mod.rs` EventSink (append→project→broadcast pump) + dispatch skeleton;
   `proj.rs` Projections::rebuild from empty/small logs.
-- [ ] **3.3** `orchestrator.rs` — new(), execute() via single mpsc actor, subscribe(),
+- [x] **3.3** `orchestrator.rs` — new(), execute() via single mpsc actor, subscribe(),
   shutdown(). *Check: orchestrator boots on tempdir store; unknown command errors cleanly.*
-- [ ] **3.4** `driver/detect.rs` + `driver/mod.rs` registry — DetectAgents works against your
+- [x] **3.4** `driver/detect.rs` + `driver/mod.rs` registry — DetectAgents works against your
   real machine (whatever agents you have installed).
 
 ## Phase 4 — ACP (fxcore/driver/acp) ← riskiest, start early
 
-- [ ] **4.1** Read the `agent-client-protocol` crate docs/source; note real type names for
+- [x] **4.1** Read the `agent-client-protocol` crate docs/source; note real type names for
   PendingAcpRequest.responder etc. directly into `acp/mod.rs` comments.
-- [ ] **4.2** `acp/mod.rs` AcpConnection: spawn + initialize handshake only.
+- [x] **4.2** `acp/mod.rs` AcpConnection: spawn + initialize handshake only.
   *Check: integration test starts FakeAgent-less real binary? No — use FakeAgent.*
-- [ ] **4.3** `tests/fake_agent.rs` — Script engine + duplex harness; initialize handshake passes.
-- [ ] **4.4** `acp/normalize.rs` — session_update → Vec<FxEvent>, request_permission split,
+- [x] **4.3** `tests/fake_agent.rs` — Script engine + duplex harness; initialize handshake passes.
+- [x] **4.4** `acp/normalize.rs` — session_update → Vec<FxEvent>, request_permission split,
   stop_reason mapping. Unit tests per mapping row.
-- [ ] **4.5** Full prompt flow through orchestrator vs FakeAgent (`tests/orchestrator.rs`
+- [x] **4.5** Full prompt flow through orchestrator vs FakeAgent (`tests/orchestrator.rs`
   happy_turn). **= M1 server-side exit.**
 
 ## Phase 5 — Daemon (fxserver)
