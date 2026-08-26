@@ -34,13 +34,13 @@ pub mod store;
 // without a module path. Anything not here is intentionally internal; adding to
 // this list is the only way a type becomes public API.
 //
-//   pub use bus::{BusError, BusReceiver, EventBus, BUS_CAPACITY};
+pub use bus::{BusError, BusReceiver, EventBus, BUS_CAPACITY};
 //       (fxserver pairs its per-client out-channel cap against BUS_CAPACITY by
 //        importing it — net/client.rs — instead of hardcoding 1024 twice.)
 //   pub use config::{Config, ConfigError};
 //   pub use orchestrator::Orchestrator;
-//   pub use store::EventStore;
-//   pub use store::sqlite::SqliteStore;  // integration tests open real tempdir stores
+pub use store::EventStore;
+pub use store::sqlite::SqliteStore; // integration tests open real tempdir stores
 //
 // Crate-root error type (defined below in this file) is implicitly part of the
 // facade via its own `pub use`:
