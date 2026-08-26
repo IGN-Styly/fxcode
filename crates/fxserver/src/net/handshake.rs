@@ -367,6 +367,12 @@ where
 
 /// Receive ONE text frame enforcing FAIL-T (idle timeout) / FAIL-J (garbage),
 /// auto-emitting the canonical close on violations.
+///
+/// RFC 6455 note: transport keepalive is NEVER a protocol violation here — a
+/// Ping is answered with its own Pong and a stray Pong is absorbed, then we
+/// keep waiting for the text envelope. Without this, a client whose keepalive
+/// beat fires between Hello and Subscribe gets murdered as "protocol_version"
+/// (observed live: fxapp's RTT probe racing its own Subscribe).
 async fn await_frame<Tx, Rx>(
     tx: &mut Tx,
     rx: &mut Rx,
@@ -378,48 +384,70 @@ where
     <Tx as futures::Sink<Wsf>>::Error: std::fmt::Display,
     Rx: futures::Stream<Item = Result<Wsf, axum::Error>> + Unpin,
 {
-    let incoming = match tokio::time::timeout(budget, rx.next()).await {
-        Err(_elapsed) => {
-            return Err(fail(
-                tx,
-                CLOSE_CODE_PROTOCOL,
-                REASON_PROTOCOL_VERSION,
-                stage,
-                "no frame within budget",
-            )
-            .await);
-        }
-        Ok(None) => {
-            return Err(fail(
-                tx,
-                CLOSE_CODE_PROTOCOL,
-                REASON_PROTOCOL_VERSION,
-                stage,
-                "peer closed early",
-            )
-            .await);
-        }
-        Ok(Some(Err(err))) => {
-            warn!(%err, "transport error during handshake");
-            return Err(HandshakeClosed {
-                reason: REASON_PROTOCOL_VERSION,
-                stage,
-            });
-        }
-        Ok(Some(Ok(frame))) => frame,
-    };
-    let text = match incoming {
-        Wsf::Text(t) => t.to_string(),
-        other => {
-            let kind = describe_frame(&other);
-            return Err(fail(
-                tx,
-                CLOSE_CODE_PROTOCOL,
-                REASON_PROTOCOL_VERSION,
-                stage,
-                kind,
-            )
-            .await);
+    // Fetch one frame; timeout/EOF/transport errors all close canonically.
+    macro_rules! next_frame {
+        () => {
+            match tokio::time::timeout(budget, rx.next()).await {
+                Err(_elapsed) => {
+                    return Err(fail(
+                        tx,
+                        CLOSE_CODE_PROTOCOL,
+                        REASON_PROTOCOL_VERSION,
+                        stage,
+                        "no frame within budget",
+                    )
+                    .await);
+                }
+                Ok(None) => {
+                    return Err(fail(
+                        tx,
+                        CLOSE_CODE_PROTOCOL,
+                        REASON_PROTOCOL_VERSION,
+                        stage,
+                        "peer closed early",
+                    )
+                    .await);
+                }
+                Ok(Some(Err(err))) => {
+                    warn!(%err, "transport error during handshake");
+                    return Err(HandshakeClosed {
+                        reason: REASON_PROTOCOL_VERSION,
+                        stage,
+                    });
+                }
+                Ok(Some(Ok(frame))) => frame,
+            }
+        };
+    }
+
+    let mut incoming = next_frame!();
+    let text = loop {
+        match incoming {
+            Wsf::Ping(payload) => {
+                if let Err(err) = tx.send(Wsf::Pong(payload)).await {
+                    warn!(%err, "failed to answer handshake ping");
+                    return Err(HandshakeClosed {
+                        reason: REASON_PROTOCOL_VERSION,
+                        stage,
+                    });
+                }
+                incoming = next_frame!();
+            }
+            Wsf::Pong(_) => {
+                incoming = next_frame!();
+            }
+            Wsf::Text(t) => break t.to_string(),
+            other => {
+                let kind = describe_frame(&other);
+                return Err(fail(
+                    tx,
+                    CLOSE_CODE_PROTOCOL,
+                    REASON_PROTOCOL_VERSION,
+                    stage,
+                    kind,
+                )
+                .await);
+            }
         }
     };
     match serde_json::from_str::<Message>(&text) {
@@ -703,6 +731,9 @@ mod tests {
         result: Result<AuthedClient, HandshakeClosed>,
         messages: Vec<Message>, // decoded Text frames IN ORDER
         closes: Vec<axum::extract::ws::CloseFrame>,
+        /// Ping/Pong frames the server emitted, in order (handshake keepalive
+        /// contract tests).
+        controls: Vec<Wsf>,
     }
 
     async fn full_run(
@@ -735,12 +766,14 @@ mod tests {
         drop(sink); // close lane so recv-cycles terminate
         let mut messages = Vec::new();
         let mut closes = Vec::new();
+        let mut controls = Vec::new();
         loop {
             match tokio::time::timeout(Duration::from_millis(5), server_rx.recv()).await {
                 Ok(Some(Wsf::Text(t))) => {
                     messages.push(serde_json::from_str(&t.to_string()).unwrap())
                 }
                 Ok(Some(Wsf::Close(frame))) => closes.push(frame.expect("close carries reason")),
+                Ok(Some(w @ (Wsf::Ping(_) | Wsf::Pong(_)))) => controls.push(w),
                 Ok(Some(_)) | Ok(None) => break,
                 Err(_) => break,
             }
@@ -749,6 +782,7 @@ mod tests {
             result,
             messages,
             closes,
+            controls,
         }
     }
 
@@ -761,6 +795,65 @@ mod tests {
             gap_limit,
         )
         .await
+    }
+
+    // ── RFC 6455 keepalive contract (live-bug regression: fxapp RTT probe) ──
+
+    #[tokio::test]
+    async fn ping_between_hello_and_subscribe_is_answered_and_ignored() {
+        let out = full_run(
+            MockState::default(),
+            &[
+                hello(STORED_TOKEN),
+                Wsf::Ping("beat-1".into()),
+                Wsf::Ping("beat-2".into()),
+                subscribe(0),
+            ],
+            Some(STORED_TOKEN),
+            TINY_BUDGET * 20,
+            DEV_GAP_LIMIT,
+        )
+        .await;
+        let authed = out.result.expect("pings must not kill the handshake");
+        // Every ping answered with its own payload, in order.
+        let pongs: Vec<_> = out
+            .controls
+            .iter()
+            .filter_map(|f| match f {
+                Wsf::Pong(b) => Some(b.to_vec()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pongs, vec![b"beat-1".to_vec(), b"beat-2".to_vec()]);
+        // Welcome flowed; replay attach proceeded normally.
+        assert!(
+            out.messages
+                .iter()
+                .any(|m| matches!(m, Message::Welcome { .. }))
+        );
+        assert_eq!(authed.high_water, Seq::new(0));
+        assert!(out.closes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stray_pong_during_handshake_is_absorbed() {
+        let out = full_run(
+            MockState::default(),
+            &[
+                hello(STORED_TOKEN),
+                Wsf::Pong("unsolicited".into()),
+                subscribe(0),
+            ],
+            Some(STORED_TOKEN),
+            TINY_BUDGET * 20,
+            DEV_GAP_LIMIT,
+        )
+        .await;
+        assert!(
+            out.result.is_ok(),
+            "a client pong is not a protocol violation"
+        );
+        assert!(out.controls.is_empty());
     }
 
     // ── FAIL-V1 / FAIL-J / FAIL-T matrix ──

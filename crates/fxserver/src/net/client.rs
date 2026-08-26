@@ -127,6 +127,10 @@ enum OutMsg {
     /// keeps ONE serialization site.
     Direct(Message),
     Event(Sequenced<FxEvent>),
+    /// Answer to an inbound transport Ping (RFC 6455 mandates the Pong echo).
+    /// Rides the ctrl lane? No: ctrl is a 1-slot TEARDOWN lane — stuffing
+    /// keepalives there could starve real closes; it gets its own bounded slot.
+    Pong(axum::body::Bytes),
 }
 
 fn close_frame(code: u16, reason: &'static str) -> Wsf {
@@ -231,6 +235,11 @@ pub(super) async fn run<Si, St>(
                         let _ = sink.send(close_frame(CLOSE_CODE_NORMAL, "")).await;
                         break;
                     }
+                    Some(OutMsg::Pong(payload)) => {
+                        if sink.send(Wsf::Pong(payload)).await.is_err() {
+                            break;
+                        }
+                    }
                     Some(OutMsg::Direct(msg)) => {
                         if sink.send(text_frame(&msg)).await.is_err() {
                             break;
@@ -329,9 +338,16 @@ pub(super) async fn run<Si, St>(
                             }
                         }
 
-                        // Unsolicited control/binary has no meaning in v0; pings
-                        // FROM us come back as Pong above.
-                        Some(Ok(Wsf::Ping(_)) | Ok(Wsf::Binary(_))) => {
+                        // RFC 6455: inbound Ping MUST be answered with its own
+                        // payload and NEVER tears down the session (browser tabs,
+                        // proxies and fxapp itself all rely on this). Binary IS a
+                        // protocol violation in v0 (envelope-only wire).
+                        Some(Ok(Wsf::Ping(payload))) => {
+                            if reader_out.try_send(OutMsg::Pong(payload)).is_err() {
+                                break;
+                            }
+                        }
+                        Some(Ok(Wsf::Binary(_))) => {
                             let _ = reader_ctrl.try_send(close_frame(CLOSE_CODE_PROTOCOL, REASON_PROTOCOL_VERSION));
                             break;
                         }

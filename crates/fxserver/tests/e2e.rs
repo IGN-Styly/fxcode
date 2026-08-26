@@ -263,6 +263,86 @@ async fn first_frame_not_hello_is_rejected() {
 }
 
 #[tokio::test]
+async fn transport_pings_survive_handshake_and_steady_state() {
+    // Live-bug regression (2026-08): a client keepalive beat racing its own
+    // Subscribe used to be murdered as "protocol_version"; steady-state pings
+    // were killed the same way. RFC 6455: pings are answered, never fatal.
+    let server = boot_server("keepalive").await;
+    let (url, _orch, scratch, ..) = &server;
+    let token = read_stored_token(scratch.path()).await;
+
+    let mut ws = connect(url).await;
+    send(&mut ws, &hello(&token)).await;
+    let Message::Welcome { .. } = next_frame(&mut ws).await.expect("welcome") else {
+        panic!("expected Welcome");
+    };
+
+    // ── handshake stage: Ping BEFORE Subscribe must not close; echo required ──
+    tokio::time::timeout(TIMEOUT, ws.send(Ws::Ping("early-beat".into())))
+        .await
+        .expect("ping send")
+        .expect("socket healthy");
+    send(
+        &mut ws,
+        &Message::Subscribe {
+            last_seq: Seq::new(0),
+        },
+    )
+    .await;
+    expect_pong(&mut ws, "early-beat").await;
+
+    // ── steady state: Ping AFTER handshake equally non-fatal ─────────────────
+    tokio::time::timeout(TIMEOUT, ws.send(Ws::Ping("mid-turn".into())))
+        .await
+        .expect("ping send")
+        .expect("socket healthy");
+    expect_pong(&mut ws, "mid-turn").await;
+
+    // Session still fully operational: correlated Reply comes back normally.
+    send(
+        &mut ws,
+        &Message::Request {
+            id: 7,
+            command: Command::DetectAgents,
+        },
+    )
+    .await;
+    match next_frame(&mut ws).await {
+        Ok(Message::Response { id: 7, .. }) => {}
+        other => panic!("expected Response id=7, got {other:?}"),
+    }
+    teardown(server).await;
+}
+
+async fn expect_pong(ws: &mut Session, payload: &str) {
+    // Drain raw frames up to the matching Pong; text envelopes (if any live
+    // tail noise arrives) are tolerated. next_frame hides control frames by
+    // design, so this reads the session directly.
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    while std::time::Instant::now() < deadline {
+        let frame = tokio::time::timeout(TIMEOUT, ws.next())
+            .await
+            .expect("frame within budget")
+            .expect("stream not ended unexpectedly")
+            .expect("ws transport ok");
+        match frame {
+            // Server runs its own 25 s keepalive beat; a conformant client
+            // echoes those pings (this test plays that role).
+            Ws::Ping(b) => {
+                ws.send(Ws::Pong(b)).await.expect("pong send healthy");
+            }
+            Ws::Pong(b) => {
+                assert_eq!(&b[..], payload.as_bytes(), "echoed ping payload");
+                return;
+            }
+            Ws::Text(_) => continue,
+            other => panic!("unexpected frame while awaiting Pong: {other:?}"),
+        }
+    }
+    panic!("no Pong({payload}) before deadline");
+}
+
+#[tokio::test]
 async fn auth_ok_welcome_then_double_subscribe_violation() {
     let server = boot_server("double-sub").await;
     let (url, _orch, scratch, ..) = &server;
