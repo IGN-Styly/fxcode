@@ -1,9 +1,10 @@
 //! Strongly-typed identifiers.
 //!
 //! Conventions:
-//! - Copy newtypes wrapping a single String (or u64 for Seq).
-//! - Serialize transparently: bare string on the wire, no `{ "AgentId": ... }`.
-//! - Derives: Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize (+ Debug).
+//! - Clone newtypes wrapping a single String; Seq wraps u64 and is also Copy + Ord.
+//! - Serialize transparently: bare string/u64 on the wire, no `{ "AgentId": ... }`.
+//! - Derives: Clone, PartialEq, Eq, Hash, Serialize, Deserialize (+ Debug);
+//!   Seq additionally derives Copy, PartialOrd, Ord.
 //! - Display impls forward to inner value (nice for tracing/logs).
 macro_rules! string_id {
     ($name:ident) => {
@@ -61,7 +62,9 @@ macro_rules! string_id {
 // pub struct AgentId(String);
 //     ...same pattern for SessionId, TurnId, ToolCallId, RequestId, OptionId.
 
-use serde::{Deserialize, Serialize};
+use std::fmt::Display;
+
+use serde::{Deserialize, Serialize, Serializer};
 
 string_id!(AgentId);
 string_id!(SessionId);
@@ -93,3 +96,15 @@ string_id!(OptionId);
 //
 // Wire note: #[serde(transparent)] on ALL of them — golden fixtures must contain bare
 // strings/u64, never newtype wrappers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct Seq(u64);
+impl Seq {
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+impl Display for Seq {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.serialize_u64(self.0)
+    }
+}
