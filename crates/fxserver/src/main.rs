@@ -141,12 +141,21 @@ async fn boot(cli: Cli) {
         exit(1);
     }
 
-    // ── 7. Listen address: chain bottoms out at loopback; pick() logs loudly ──
-    let (addr, method) = fxserver::ifaddr::pick(cfg.bind_override).await;
-    tracing::info!(%addr, ?method, "binding");
+    // ── 7. Listen plan: bind is WILDCARD by default (token handshake is the
+    //    security boundary); advertise IP printed so humans know where to aim
+    //    clients. Override (--bind/config) binds verbatim instead.
+    let plan = fxserver::ifaddr::plan_listen(cfg.bind_override).await;
+    tracing::info!(bind = %plan.bind, advertise = %plan.advertise_ip, method = ?plan.advertise_method, "binding");
+    println!(
+        "fxserver listening on {} (clients: use ws://{}:{}, token printed above if first boot)",
+        plan.bind,
+        plan.advertise_ip,
+        plan.bind.port()
+    );
 
     // ── 8. Serve until SIGTERM/Ctrl-C; child kill ladder runs inside fxcore ──
-    if let Err(err) = net::serve(std::sync::Arc::new(orchestrator), addr, &cfg.data_dir).await {
+    if let Err(err) = net::serve(std::sync::Arc::new(orchestrator), plan.bind, &cfg.data_dir).await
+    {
         tracing::error!(%err, "listener failed");
         exit(1);
     }

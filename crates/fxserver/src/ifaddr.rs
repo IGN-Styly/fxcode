@@ -1,24 +1,29 @@
-//! Choose the listen address.
+//! Choose the listen address AND the address advertised to humans/clients.
 //!
-//! Priority (docs/crates.md) — first match wins, every outcome logged with its method:
-//!   1. cfg.bind_override (explicit --bind / config.toml)
-//!   2. tailscale IP via `tailscale ip -4` (CLI probe)
-//!   3. tailscale IP via interface scan (any addr in 100.64.0.0/10 — CGNAT range)
-//!   4. loopback 127.0.0.1
+//! DECISION SPLIT (user-facing fix 2026-08: wildcard default bind):
+//! - BIND: cfg.bind_override verbatim, else **0.0.0.0:{DEFAULT_PORT}**. We always
+//!   listen on every interface unless explicitly told otherwise — the pairing
+//!   token handshake is the security boundary (constant-time compare, closed
+//!   sockets on failure), so wildcard binding costs nothing and removes the
+//!   whole class of "server unreachable from my phone" surprises.
+//! - ADVERTISE: best guess at a reachable IP for the startup log line /
+//!   printed QR-style hint, purely informational:
+//!   tailscale CLI `ip -4` > any 100.64.0.0/10 interface > loopback.
 //!
-//! REMINDER: we never JOIN anything — host's tailscaled owns membership; we bind to
-//! what it provides.
+//! REMINDER: we never JOIN anything — host's tailscaled owns membership; we only
+//! surface what it provides for display.
 //!
-//! Structure note: [`classify`] is the PURE decision core (unit-testable matrix
-//! below); [`via_cli`] / [`via_interfaces`] are thin IO wrappers whose results are
-//! threaded back through classify so prod and tests share one chain.
+//! Structure note: [`classify`] is the PURE advertisement decision core
+//! (unit-testable matrix below); [`via_cli`] / [`via_interfaces`] are thin IO
+//! wrappers whose results are threaded back through classify; [`bind_addr`] is
+//! the pure BIND decision. The three compose in [`plan_listen`].
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
 use if_addrs::get_if_addrs;
 use tokio::process::Command;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Single source of truth for the port when only an IP is known (steps 2–4).
 /// 8949 is arbitrary but MUST stay stable: clients type/persist full URLs against it.
@@ -29,14 +34,23 @@ pub const DEFAULT_PORT: u16 = 8949;
 /// (~500ms: a cold tailscaled CLI is usually <50ms; anything slower is degraded.)
 const CLI_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 
-/// Which step of the priority chain produced an answer — returned by pick() so
-/// main.rs can log it loudly, and unit-testable without touching the network.
+/// Which step of the ADVERTISE chain produced an answer — logged so operators
+/// know where the printed hint came from; unit-testable without touching IO.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Method {
     BindOverride,
     TailscaleCli,
     InterfaceScan,
     Loopback,
+}
+
+/// What to actually PASS TO THE KERNEL as listen socket address. Wildcard by
+/// default (see module docs); overrides win verbatim including port.
+pub fn bind_addr(bind_override: Option<SocketAddr>) -> SocketAddr {
+    bind_override.unwrap_or(SocketAddr::new(
+        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        DEFAULT_PORT,
+    ))
 }
 
 /// CGNAT range check WITHOUT a cidr crate: Tailscale hands out 100.64.0.0/10,
@@ -52,22 +66,14 @@ pub fn is_cgnat(ip: &IpAddr) -> bool {
     }
 }
 
-/// PURE priority-chain decision over already-fetched candidates. The table this
-/// pins (v4/v6 normalization = identity comparison on parsed [`IpAddr`]s):
-///   Some(override)         => BindOverride     (even when cli/scan would answer)
-///   None + cli Some        => TailscaleCli
-///   None + no-cli + scan S => InterfaceScan    (only if S is a real CGNAT hit;
-///                                              v6 or any other scan result
-///                                              normalizes to "no candidate")
-///   all None               => Loopback
-pub fn classify(
-    bind_override: Option<SocketAddr>,
-    cli: Option<IpAddr>,
-    scan: Option<IpAddr>,
-) -> Method {
-    if bind_override.is_some() {
-        return Method::BindOverride;
-    }
+/// PURE advertisement-chain decision over already-fetched candidates. The
+/// table this pins (v4/v6 normalization = identity comparison on parsed
+/// [`IpAddr`]s):
+///   cli Some cgnat        => TailscaleCli
+///   no-cli + scan Some cgnat => InterfaceScan (only real CGNAT hits count;
+///                              v6 or other scan results normalize away)
+///   everything else       => Loopback
+pub fn classify(cli: Option<IpAddr>, scan: Option<IpAddr>) -> Method {
     let cgnat_cli = cli.filter(is_cgnat);
     let cgnat_scan = scan.filter(is_cgnat);
     if cgnat_cli.is_some() {
@@ -79,34 +85,56 @@ pub fn classify(
     }
 }
 
-/// NEVER fails: the chain bottoms out at loopback. Tailscale absence is a logged
-/// degradation, not an error (a laptop without tailnet must still serve localhost).
-/// Logs the chosen address AND method at info, loudly.
-pub async fn pick(cfg_bind_override: Option<SocketAddr>) -> (SocketAddr, Method) {
-    // IO once per helper; classify owns ALL branching on the results.
+/// Outcome of the listen-planning phase: where the kernel listens vs what we
+/// TELL humans to point at. These differ on purpose (wildcard bind default).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ListenPlan {
+    pub bind: SocketAddr,
+    /// Informational: the most plausible reachable IP for clients (tailscale >
+    /// CGNAT-range iface > loopback). NOT used for binding.
+    pub advertise_ip: IpAddr,
+    pub advertise_method: Method,
+}
+
+/// NEVER fails: advertise bottoms out at loopback, bind at 0.0.0.0. IO runs
+/// once per source; classify + bind_addr own ALL branching on the results.
+/// Logs loudly; main.rs prints the advertise line too when it differs from a
+/// friendly form of `bind`.
+pub async fn plan_listen(bind_override: Option<SocketAddr>) -> ListenPlan {
     let cli = via_cli().await;
     let scan = via_interfaces();
-    let method = classify(cfg_bind_override, cli, scan);
-
-    let addr = match method {
-        // Taken verbatim, port included — validation happened in Config parse.
-        Method::BindOverride => cfg_bind_override.expect("classify matched override"),
-        Method::TailscaleCli => {
-            SocketAddr::new(cli.filter(is_cgnat).expect("cli hit"), DEFAULT_PORT)
-        }
-        Method::InterfaceScan => {
-            SocketAddr::new(scan.filter(is_cgnat).expect("scan hit"), DEFAULT_PORT)
-        }
-        Method::Loopback => {
-            warn!(
-                "no tailnet found (CLI absent + no 100.64.0.0/10 interface); \
-                 remote clients unavailable"
-            );
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), DEFAULT_PORT)
-        }
+    let advertise_method = if cli.is_some() || scan.is_some() {
+        classify(cli, scan) // advertisement decision only
+    } else {
+        Method::Loopback
     };
-    info!(%addr, ?method, "listen address selected");
-    (addr, method)
+
+    let advertise_ip = match advertise_method {
+        Method::TailscaleCli => {
+            let ip = cli.filter(is_cgnat).expect("method implies cli cgnat hit");
+            debug!(%ip, "tailscale CLI answered");
+            ip
+        }
+        Method::InterfaceScan => scan.filter(is_cgnat).expect("method implies scan hit"),
+        // Loopback floor — including when an explicit bind override exists
+        // (advertising the override's literal address is main.rs's job, since
+        // only IT knows whether that addr is reachable or a kernel-internal one).
+        _ => IpAddr::V4(Ipv4Addr::LOCALHOST),
+    };
+    // If an override exists, IT is also the best advertisement we know (the
+    // operator pointed somewhere deliberately); surface its IP verbatim.
+    let advertise_ip = match bind_override {
+        Some(over) => over.ip(),
+        None => advertise_ip,
+    };
+
+    let bind = bind_addr(bind_override);
+    info!(%bind, %advertise_ip, ?advertise_method, "listen planned");
+    ListenPlan {
+        bind,
+        advertise_ip,
+        advertise_method,
+    }
 }
 
 /// Step 2 probe: spawn `tailscale ip -4`, take the FIRST stdout line as IPv4.
@@ -191,33 +219,35 @@ mod tests {
     }
 
     #[test]
-    fn priority_chain_matrix() {
-        let over = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 1234));
+    fn advertisement_chain_matrix() {
         let ts_ip = v4([100, 101, 102, 103]);
-        // Explicit override ALWAYS wins — even with every other source live.
-        assert_eq!(
-            classify(Some(over), Some(ts_ip), Some(ts_ip)),
-            Method::BindOverride
-        );
         // CLI beats interface scan.
-        assert_eq!(
-            classify(None, Some(ts_ip), Some(ts_ip)),
-            Method::TailscaleCli
-        );
-        assert_eq!(classify(None, None, Some(ts_ip)), Method::InterfaceScan);
-        assert_eq!(classify(None, None, None), Method::Loopback);
+        assert_eq!(classify(Some(ts_ip), Some(ts_ip)), Method::TailscaleCli);
+        assert_eq!(classify(None, Some(ts_ip)), Method::InterfaceScan);
+        assert_eq!(classify(None, None), Method::Loopback);
         // Normalization: junk answers degrade one step, never up.
         assert_eq!(
-            classify(None, None, Some(IpAddr::V6("fd00::1".parse().unwrap()))),
+            classify(None, Some(IpAddr::V6("fd00::1".parse().unwrap()))),
             Method::Loopback
         );
+        // A non-CGNAT CLI answer (plain LAN tailscale exit configs) degrades to scan.
         assert_eq!(
-            classify(None, Some(v4([192, 168, 1, 1])), Some(ts_ip)),
+            classify(Some(v4([192, 168, 1, 1])), Some(ts_ip)),
             Method::InterfaceScan
         );
+        assert_eq!(classify(Some(v4([192, 168, 1, 1])), None), Method::Loopback);
         assert_eq!(
-            classify(None, Some(IpAddr::V6(Ipv6Addr::LOCALHOST)), None),
+            classify(Some(IpAddr::V6(Ipv6Addr::LOCALHOST)), None),
             Method::Loopback
         );
+    }
+
+    #[test]
+    fn bind_defaults_wildcard_override_wins_verbatim() {
+        let over = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 2), 1234));
+        assert_eq!(bind_addr(Some(over)), over);
+        let wild = bind_addr(None);
+        assert!(wild.ip().is_unspecified());
+        assert_eq!(wild.port(), DEFAULT_PORT);
     }
 }
