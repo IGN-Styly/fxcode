@@ -5,7 +5,26 @@
 //! - Serialize transparently: bare string on the wire, no `{ "AgentId": ... }`.
 //! - Derives: Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize (+ Debug).
 //! - Display impls forward to inner value (nice for tracing/logs).
-
+macro_rules! string_id {
+    ($name:ident) => {
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[serde(transparent)]
+        pub struct $name(String);
+        impl $name {
+            pub fn from_raw(inner: String) -> Self {
+                Self(inner)
+            }
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
+    };
+}
 // Imports to restore as you define the types:
 // use serde::{Deserialize, Serialize};   // derive macros for every newtype below
 
@@ -42,30 +61,14 @@
 // pub struct AgentId(String);
 //     ...same pattern for SessionId, TurnId, ToolCallId, RequestId, OptionId.
 
-macro_rules! string_id {
-    ($name:ident) => {
-        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-        #[serde(transparent)]
-        pub struct $name(String);
-        impl $name {
-            pub fn from_raw(inner: String) -> Self {
-                Self(inner)
-            }
-            pub fn as_str(&self) -> &str {
-                &self.0
-            }
-        }
-        impl std::fmt::Display for $name {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.write_str(&self.0)
-            }
-        }
-    };
-}
-
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 string_id!(AgentId);
+string_id!(SessionId);
+string_id!(TurnId);
+string_id!(ToolCallId);
+string_id!(RequestId);
+string_id!(OptionId);
 // Uniform API per id type (private inner field keeps clients from fabricating ids
 // by accident while still allowing reads for ACP calls and logging):
 //
