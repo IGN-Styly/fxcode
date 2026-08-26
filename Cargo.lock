@@ -2054,6 +2054,18 @@ dependencies = [
 
 [[package]]
 name = "flume"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da0e4dd2a88388a1f4ccc7c9ce104604dab68d9f408dc34cd45823d5a9069095"
+dependencies = [
+ "futures-core",
+ "futures-sink",
+ "nanorand",
+ "spin 0.9.9",
+]
+
+[[package]]
+name = "flume"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e139bc46ca777eb5efaf62df0ab8cc5fd400866427e56c68b22e414e53bd3be"
@@ -2308,6 +2320,7 @@ name = "fxapp"
 version = "0.1.0"
 dependencies = [
  "async-tungstenite",
+ "flume 0.11.1",
  "futures",
  "fxproto",
  "gpui",
@@ -2331,6 +2344,7 @@ dependencies = [
  "tokio",
  "toml 0.8.23",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -2351,9 +2365,11 @@ dependencies = [
  "futures",
  "fxcore",
  "fxproto",
+ "if-addrs",
  "rand 0.8.8",
  "subtle",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]
@@ -3409,6 +3425,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "if-addrs"
+version = "0.13.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69b2eeee38fef3aa9b4cc5f1beea8a2444fc00e7377cafae396de3f5c2065e24"
+dependencies = [
+ "libc",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "ignore"
 version = "0.4.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4258,6 +4284,15 @@ dependencies = [
  "spirv",
  "thiserror 2.0.20",
  "unicode-ident",
+]
+
+[[package]]
+name = "nanorand"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a51313c5820b0b02bd422f4b44776fbf47961755c74ce64afc73bfad10226c3"
+dependencies = [
+ "getrandom 0.2.17",
 ]
 
 [[package]]
@@ -6085,7 +6120,7 @@ dependencies = [
  "async-task",
  "backtrace",
  "chrono",
- "flume",
+ "flume 0.12.0",
  "futures",
  "parking_lot",
  "rand 0.9.5",

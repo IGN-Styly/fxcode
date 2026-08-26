@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 async-tungstenite = { workspace = true }
+flume = { workspace = true }     # channel bridge for conn/ws.rs (see its TODO)
 futures = { workspace = true }
 fxproto = { workspace = true }   # NEVER fxcore — the client cannot spawn agents
 gpui = { workspace = true }

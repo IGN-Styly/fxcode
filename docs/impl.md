@@ -26,9 +26,11 @@ milestone are dependency-ordered so nothing is stubbed twice.
 
 - [ ] **1.1** `model/agents.rs`, `threads.rs`, `perms.rs` — states + folds per their trigger maps.
   Derive Serialize/Deserialize (Snapshot needs them).
-- [ ] **1.2** Fold property tests: any event into fresh state ⇒ valid; re-applying same event
-  ⇒ no dupes (idempotence); chunk merging collapses consecutive same-role text.
-  *Check: `cargo test -p fxproto`. This phase done = both server & client brains exist.*
+- [ ] **1.2** Fold property tests: any event into fresh state ⇒ valid state. Delivery is
+  exactly-once (see model/mod.rs contract), so idempotence claims are scoped to
+  keyed/upsert events (ToolCallUpsert, PermissionResolved); append-shaped events (Chunk,
+  SessionCreated) must NOT be re-applied. Chunk merging collapses consecutive same-role
+  text and breaks at TurnStarted. *Check: `cargo test -p fxproto`.*
 
 ## Phase 2 — Persistence (fxcore/store, fxcore/bus)
 

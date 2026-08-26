@@ -53,12 +53,11 @@ One WebSocket endpoint. Two logical streams multiplexed by message type:
 // client → server
 enum Command {
     DetectAgents,
-    StartAgent { driver: DriverId, cwd: PathBuf },
-    NewSession { agent: AgentId, mcp_servers: Vec<McpServer> },
+    StartAgent { driver: DriverId },      // cwd lives on NewSession (anchors ACP session scope)
+    NewSession { agent: AgentId, cwd: PathBuf, mcp_servers: Vec<McpServerSpec> },
     Prompt { session: SessionId, blocks: Vec<ContentBlock> },
     Cancel { session: SessionId },
     PermissionResponse { request_id: RequestId, option_id: OptionId },
-    Subscribe { last_seq: Seq },          // replay + live attach
 }
 
 // server → client
@@ -80,14 +79,19 @@ enum FxEvent {
 
 Rules:
 
-- Every `FxEvent` gets a **global monotonic `seq`** stamped by the event store at append time.
-- `Subscribe { last_seq }` replays everything after the cursor, then attaches live. If the
-  client is too far behind (> N events), server sends a snapshot + fresh baseline instead of a
-  giant replay.
+- Subscription is **envelope-level, not a command**: after the `Hello`/`Welcome` handshake the
+  client sends one envelope `Message::Subscribe { last_seq }`; the server replays everything
+  after the cursor and attaches live. Too far behind (> N events) ⇒ `SnapshotRequired`
+  carrying a full projection `Snapshot { baseline_seq, agents, threads, perms }`.
+- Every `FxEvent` gets a **global monotonic `seq`** (`Seq(u64)` newtype) stamped by the event
+  store at append time.
 - Normalized events, not ACP pass-through: the driver layer translates `session/update`
   notifications into the shapes above so the client never learns vendor quirks. ACP `_meta`
-  extensions get preserved opaquely for drivers that need them.
-- Version field in the handshake; mismatch = explicit error, not silent drift.
+  extensions get preserved opaquely for drivers that need them. Non-text content blocks ride
+  `_meta`; only text is flattened into `Chunk`.
+- Version field in the handshake; mismatch = explicit close (`"protocol_version"`), not silent
+  drift. Close reasons are a fixed vocabulary: `"auth_failed"`, `"protocol_version"`,
+  `"resubscribe"`.
 
 ## fxcore (the deep module)
 
@@ -96,15 +100,23 @@ Public surface stays tiny; guts are submodules:
 ```rust
 pub struct Orchestrator { /* … */ }
 impl Orchestrator {
+    pub async fn new(cfg: Config) -> Result<Self>;
     pub async fn execute(&self, cmd: Command) -> Result<Reply>;
-    pub fn events(&self) -> impl Stream<Item = Sequenced<FxEvent>>; // broadcast after persist
+    pub fn subscribe(&self) -> broadcast-style receiver;          // post-persist fanout
+    pub async fn replay_from(&self, cursor: Seq);                 // handshake replay leg
+    pub fn projection_snapshot(&self) -> Snapshot;                // snapshot leg
+    pub async fn shutdown(&self);
 }
 
 pub trait EventStore: Send + Sync {
-    pub async fn append(&self, ev: FxEvent) -> Result<Seq>;
-    pub async fn replay(&self, after: Seq) -> Result<Vec<Sequenced<FxEvent>>>;
+    pub async fn append(&self, ev: FxEvent) -> Result<Sequenced<FxEvent>>;
+    pub async fn replay_batch(&self, after: Seq, limit: usize)
+        -> Result<Vec<Sequenced<FxEvent>>>;                       // paginated: bounded memory
 }
 ```
+
+Ids: minted ONLY by fxcore's `IdGen` (uuid v7; typed ctors for agent/turn/request).
+`SessionId` and `ToolCallId` are adopted verbatim from the agent — never generated.
 
 Internals:
 

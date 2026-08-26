@@ -14,8 +14,10 @@ axum = { workspace = true }
 fxcore = { workspace = true }
 fxproto = { workspace = true }
 futures = { workspace = true }
+if-addrs = { workspace = true }
 rand = { workspace = true }
 subtle = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

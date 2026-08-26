@@ -48,8 +48,9 @@ src/
   event.rs      FxEvent enum (normalized; see architecture.md) + Sequenced<T> { seq, inner }
   envelope.rs   Message enum — everything that crosses the wire:
                   Hello { proto_version, token } / Welcome { server_version, head_seq }
-                  Command(..) / Reply(..) / Event(Sequenced<FxEvent>)
-                  Subscribe { last_seq } / SnapshotRequired { baseline, snapshot }
+                  Request { id, command } / Response { id, reply } / Event { Sequenced<FxEvent> }
+                  Subscribe { last_seq } / SnapshotRequired { snapshot }   (handshake-only)
+                  — subscription is envelope-level; there is NO Command::Subscribe
   driver.rs     DriverId enum { ClaudeCode, GeminiCli, CodexCli }, DriverSpec { program, args, env }
   model/        canonical projections + folds (the shared brain)
     mod.rs      pub use
@@ -150,9 +151,10 @@ src/
                  owns membership; we only bind to the interface it provides.
   net/
     mod.rs       axum app: single WS route /ws, health GET /healthz (no auth)
-    handshake.rs first frame must be Hello: check proto_version, constant-time token compare;
-                 then expect Subscribe → ReplayFrom(store, cursor) → attach bus live stream.
-                 Gap too large (> N events) ⇒ SnapshotRequired instead.
+    handshake.rs first frame must be Hello: check proto_version (close "protocol_version" on
+                 mismatch), constant-time token compare ("auth_failed"); then expect the ONE
+                 envelope Subscribe → orchestrator.replay_from(cursor) → attach bus live stream.
+                 Gap too large (> N events) ⇒ projection_snapshot() + SnapshotRequired instead.
     client.rs    per-conn task pair: read loop (frames → orchestrator.execute → Reply back),
                  write loop (replay buffer then broadcast, bounded chan; on lag disconnect
                  client with Resubscribe notice — cursor makes this cheap)
