@@ -238,4 +238,72 @@ mod tests {
         assert!(st.threads.threads.is_empty());
         assert!(st.agents.agents.is_empty());
     }
+
+    /// COUPLING GUARD for the owner match in apply(): one constructor per
+    /// FxEvent variant. Adding a tenth variant makes this test fail to compile,
+    /// forcing the routing rules here (and any new fold ownership) to be decided
+    /// deliberately instead of silently landing in the `_ =>` catch-all.
+    #[test]
+    fn every_event_variant_routes_through_apply() {
+        let events: [FxEvent; 9] = [
+            FxEvent::AgentStatus {
+                agent: AgentId::from_raw("a".into()),
+                driver: DriverId::ClaudeCode,
+                status: FxAgentStatus::Ready,
+            },
+            FxEvent::TurnStarted {
+                session: SessionId::from_raw("s".into()),
+                turn: fxproto::ids::TurnId::from_raw("t".into()),
+            },
+            FxEvent::Chunk {
+                session: SessionId::from_raw("s".into()),
+                turn: fxproto::ids::TurnId::from_raw("t".into()),
+                role: Role::User,
+                text: "c".into(),
+            },
+            FxEvent::ToolCallUpsert {
+                session: SessionId::from_raw("s".into()),
+                tool_call: ToolCallId::from_raw("tc".into()),
+                title: "t".into(),
+                kind: fxproto::content::ToolCallKind::Read,
+                status: ToolCallStatus::Completed,
+                output: None,
+                _meta: None,
+            },
+            FxEvent::PlanUpdated {
+                session: SessionId::from_raw("s".into()),
+                entries: vec![],
+            },
+            FxEvent::PermissionRequested {
+                request_id: fxproto::ids::RequestId::from_raw("r".into()),
+                session: SessionId::from_raw("s".into()),
+                tool_call: fxproto::event::ToolCallSummary {
+                    tool_call: ToolCallId::from_raw("tc".into()),
+                    title: "t".into(),
+                },
+                options: vec![],
+            },
+            FxEvent::PermissionResolved {
+                request_id: fxproto::ids::RequestId::from_raw("r".into()),
+                chosen: None,
+            },
+            FxEvent::TurnFinished {
+                session: SessionId::from_raw("s".into()),
+                turn: fxproto::ids::TurnId::from_raw("t".into()),
+                stop_reason: fxproto::content::StopReason::EndTurn,
+            },
+            FxEvent::SessionCreated {
+                session: SessionId::from_raw("s2".into()),
+                agent: AgentId::from_raw("a".into()),
+                cwd: "/w".into(),
+                mcp_servers: vec![],
+            },
+        ];
+        let mut st = AppState::default();
+        let mut last = 0;
+        for (i, ev) in events.into_iter().enumerate() {
+            last = st.apply(&sequenced(last + 1, ev));
+            assert_eq!(last, i as u64 + 1);
+        }
+    }
 }

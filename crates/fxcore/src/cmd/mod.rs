@@ -91,7 +91,6 @@ impl EventSink {
     ///
     /// Combined with append assigning monotonic rowids inside this same mutex,
     /// the next event after the frame has seq == baseline_seq + 1.
-    #[allow(dead_code)] // consumed by orchestrator.rs in the next file
     pub(crate) async fn snapshot_locked(
         &self,
     ) -> Result<fxproto::envelope::Snapshot, crate::Error> {

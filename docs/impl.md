@@ -34,9 +34,9 @@ milestone are dependency-ordered so nothing is stubbed twice.
 
 ## Phase 2 — Persistence (fxcore/store, fxcore/bus)
 
-- [ ] **2.1** `store/mod.rs` trait finalized, `store/sqlite.rs` impl (WAL, append/replay/head_seq).
-- [ ] **2.2** SQLite tests (tempdir): ordering, suffix replay, reopen-persistence. *Check: green.*
-- [ ] **2.3** `bus.rs` EventBus + lag policy. Test: subscriber sees strictly increasing seq.
+- [x] **2.1** `store/mod.rs` trait finalized, `store/sqlite.rs` impl (WAL, append/replay/head_seq).
+- [x] **2.2** SQLite tests (tempdir): ordering, suffix replay, reopen-persistence. *Check: green.*
+- [x] **2.3** `bus.rs` EventBus + lag policy. Test: subscriber sees strictly increasing seq.
 
 ## Phase 3 — Server core wiring (fxcore)
 
@@ -81,7 +81,7 @@ milestone are dependency-ordered so nothing is stubbed twice.
 
 ## Phase 7 — One agent end-to-end (**M1 exit**)
 
-- [ ] **7.1** `views/thread.rs` minimal: flat message list from ThreadState, composer → Prompt.
+- [x] **7.1** `views/thread.rs` minimal: flat message list from ThreadState, composer → Prompt.
 - [ ] **7.2** Drive claude-code-acp (or gemini --acp) from the UI: prompt → streamed chunks →
   stopReason. Kill/restart fxapp mid-turn → reconnect replays transcript.
   *This is the first demoable moment — commit a tag.*
@@ -97,10 +97,16 @@ milestone are dependency-ordered so nothing is stubbed twice.
 
 ## Phase 9 — Product surface (**M3 exit**)
 
-- [ ] **9.1** `views/sidebar.rs`, `message.rs` (TextView markdown — measure streaming perf),
+- [x] **9.1** `views/sidebar.rs`, `message.rs` (TextView markdown — measure streaming perf),
   `tool_call.rs` cards keyed by ToolCallId upserts.
-- [ ] **9.2** `theme.rs`; Dock layout persistence; status bar.
-- [ ] **9.3** `views/setup.rs` DetectAgents UX + pairing UX polish (rotate-token subcommand).
+- [ ] **9.2** `theme.rs` DONE (dark-first + hot-swap); status bar DONE; Dock *layout
+  persistence* still open.
+- [ ] **9.3** `rotate-token` subcommand DONE (fxserver); DetectAgents UX screen +
+  pairing polish still open (`views/setup.rs` intentionally not yet in mod tree).
+- Note: 6.4 code landed (status/latency badge replaces HelloWorld) but its visual exit
+  check needs a first human run on a display; left unticked until then. ContentBlock::
+  Resource (fxproto) was added outside phase scope by direct request — normalize.rs maps
+  it when agents send resource blocks.
 
 ## Phase 10 — Checkpoints (**M4**) & Hardening (**M5**)
 

@@ -165,7 +165,9 @@ src/
 ```
 
 Deps: `axum` (ws feature), `tokio`, `rand`, `subtle` (ct compare), `tracing`,
-`fxcore`, `fxproto`.
+`serde_json`, `fxcore`, `fxproto`. Dev-only: `async-tungstenite` (ws client in tests).
+(serde_json added when envelope encoding landed in net/client.rs; async-tungstenite is
+scoped to tests/e2e.rs raw-socket clients.)
 
 Auth stance: Tailscale = transport identity; token = seatbelt vs other tailnet devices. No TLS,
 no accounts, no sessions — deliberately.
