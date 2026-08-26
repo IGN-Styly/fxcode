@@ -1,71 +1,60 @@
 //! GPUI client. Thin by construction:
 //!   events → fxproto::model folds → stores → cx.notify() → views re-render.
+//!
+//! BOOT ORDER (locked; mirrors main.rs TODO blueprint):
+//!
+//! 1. gpui_platform::application().run(…)
+//! 2. gpui_component::init(cx) — required before any component
+//! 3. theme::init(cx) — dark-first registration
+//! 4. cx.set_global(AppState…) — stores live here; empty projections. Real content
+//!    arrives via events or SnapshotRequired, NEVER a boot load.
+//! 5. ConnectionManager::spawn(cx, url, token) — reads cursor::load() itself for
+//!    url/token/last_seq seeds when args are None (fresh boot w/ remembered state),
+//!    starting the handshake + reconnect loop.
+//! 6. open window → Root::new(WorkspaceView…)) — routing table in views/mod.rs swaps
+//!    between connect screen and dock by conn_status.
 
 use gpui::*;
-use gpui_component::{button::*, *};
 
-// NOTE (module status — accurate as of 2026-08-26, the old blanket claim was wrong):
-//   these files exist ON DISK and some carry real top-level code already:
-//     conn/mod.rs, conn/ws.rs, conn/cursor.rs, store/mod.rs, views/*   → live `pub mod`
-//       decls + use-lists; declaring them here COMPILES today.
-//     theme.rs                                                         → pure TODO
-//       comments; declare it only when init()/set_theme gain bodies.
-//   Uncomment each `mod` as it becomes compilable; never declare a file that only holds
-//   TODO comments (zero-warning rule).
-// mod conn;
-// mod store;
-// mod theme;
-// mod views;
+mod conn;
+mod store;
+mod theme;
+mod views;
 
 fn main() {
-    // Existing hello-world kept runnable until Phase 6.4 replaces it. Boot order to build:
-    //
-    // 1. gpui_platform::application().run(...)
-    // 2. gpui_component::init(cx)                    // required before any component
-    // 3. theme::init(cx)                             // register chosen themes
-    // 4. cx.set_global(AppState::default())          // stores live here; empty projections —
-    //                                                //   real content arrives via events or
-    //                                                //   SnapshotRequired, never a boot load
-    // 5. ConnectionManager::spawn(cx, url, token)    // reads cursor::load() itself for url/
-    //                                                //   token/last_seq seeds when args are
-    //                                                //   None (fresh boot w/ remembered state);
-    //                                                //   starts handshake + reconnect loop
-    // 6. open window → Root::new(views::WorkspaceView::new(...))
-    //    → WorkspaceView routes between connect.rs screen and the docked workspace
-    //      based on AppState.conn_status (views/mod.rs routing table is normative).
+    // Optional CLI overrides for smoke-testing without editing client-state.json:
+    // `fxapp [url [token]]`. Absent args fall through to remembered state (step 5).
+    let arg_url = std::env::args().nth(1);
+    let arg_token = std::env::args().nth(2);
+
     gpui_platform::application().run(move |cx| {
+        // 2 — component library first: it registers ThemeRegistry + all component
+        // actions keybindings underneath us.
         gpui_component::init(cx);
 
+        // 3 — dark-first theme choice on top of the stock registry set.
+        theme::init(cx);
+
+        // 4 — empty projections + idle conn status; the manager mirrors status into
+        // this global from now on.
+        cx.set_global(store::AppState::default());
+
+        // 5 — connection lifecycle starts before any window exists so the FIRST frame
+        // already reflects Connecting / fatal / remembered-state realities.
+        let manager = conn::ConnectionManager::spawn(cx, arg_url, arg_token);
+
+        // 6 — window root routes between ConnectScreen and the docked workspace.
+        let window_options = WindowOptions {
+            window_bounds: Some(WindowBounds::centered(size(px(1280.), px(800.)), cx)),
+            ..Default::default()
+        };
         cx.spawn(async move |cx| {
-            cx.open_window(WindowOptions::default(), |window, cx| {
-                let view = cx.new(|_| HelloWorld);
-                cx.new(|cx| Root::new(view, window, cx))
+            cx.open_window(window_options, |window, cx| {
+                let workspace = cx.new(|cx| views::WorkspaceView::new(manager.clone(), window, cx));
+                cx.new(|cx| gpui_component::Root::new(workspace, window, cx))
             })
-            .expect("Failed to open window");
+            .expect("failed to open fxapp window");
         })
         .detach();
     });
-}
-
-// DELETE HelloWorld when ALL of: WorkspaceView renders in this window AND the status bar
-// shows conn status + ws RTT (M0 exit check, impl.md Phase 6.4). Delete the struct, its
-// Render impl, AND the `use gpui_component::{button::*…}` import it uniquely needs — no
-// dead imports may survive it. It must not outlive Phase 6.
-struct HelloWorld;
-impl Render for HelloWorld {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .v_flex()
-            .gap_2()
-            .size_full()
-            .items_center()
-            .justify_center()
-            .child("Hello, World!")
-            .child(
-                Button::new("ok")
-                    .primary()
-                    .label("Let's Go!")
-                    .on_click(|_, _, _| println!("Clicked!")),
-            )
-    }
 }
