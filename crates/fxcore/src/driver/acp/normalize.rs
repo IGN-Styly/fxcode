@@ -58,6 +58,13 @@
 // Entry point receives OUR session already resolved by the actor (see
 // acp/mod.rs register_session); callers pre-reject unknown sessions.
 //
+// WIRE SHAPE REALITY (verified schema 1.4.0): acp::SessionUpdate is an
+// #[non_exhaustive] ENUM OF TUPLE VARIANTS (UserMessageChunk(ContentChunk),
+// ToolCall(ToolCall), …) with `#[serde(tag = "sessionUpdate",
+// rename_all = "snake_case")]`. The snake_case names below are the WIRE TAGS;
+// in Rust they are CamelCase tuple variants carrying their payload struct —
+// match on e.g. SessionUpdate::ToolCall(t), read t.tool_call_id etc.
+//
 // pub fn session_update(
 //     our_session: &SessionId,
 //     note: &acp::SessionNotification,          // { session_id, update, meta }

@@ -13,6 +13,45 @@
 //! `PromptRequest/PromptResponse`, `StopReason`. NOTE those enums are
 //! `#[non_exhaustive]` upstream — see normalize.rs for how this file deals
 //! with that.
+//!
+//! SDK INTEGRATION FACTS (verified against v1.3.0 / schema 1.4.0 source — read
+//! before implementing, they change the shape of this actor):
+//!
+//! 1. THE SDK RUNS ON futures-io, NOT TOKIO. The generic transport is
+//!    `acp::ByteStreams<OB, IB>` with bounds `OB: futures::AsyncWrite + Send +
+//!    'static`, `IB: futures::AsyncRead + Send + 'static` (jsonrpc.rs). Tokio
+//!    objects bridge via `tokio_util::compat` (`TokioAsyncReadCompatExt`,
+//!    `FuturesAsyncReadCompatExt`) — that's why the workspace pins tokio-util
+//!    feature "compat". `acp::Lines::new(sink, stream)` exists but is redundant;
+//!    ByteStreams already speaks ndjson line discipline internally.
+//!
+//! 2. `acp::Stdio` is NOT for us — it wires a process's OWN stdio (that's how an
+//!    agent/proxy binary exposes itself). Two real options for connecting to a
+//!    spawned child:
+//!      - DECIDED (v0): spawn ourselves per step 1 below (kill_on_drop control,
+//!        SIGTERM→SIGKILL ordering), then build the transport manually:
+//!        `ByteStreams::new(child.stdin.compat_write(), child.stdout.compat())`
+//!        — outgoing = OUR write end into the child's stdin; incoming = OUR read
+//!        end from the child's stdout. Direction of each half is where bugs hide.
+//!      - Alternative: `acp::AcpAgent::from_str("prog args…")` implements
+//!        ConnectTo and spawns/wires the process itself (async_process::Child),
+//!        killing the whole PROCESS GROUP on drop on Unix (survives npx/uvx
+//!        wrappers). Costs us child-handle ownership; revisit if wrapper-process
+//!        zombies appear (M5 hardening).
+//!
+//! 3. CONNECTION LIFECYCLE IS ONE CLOSURE: everything runs under
+//!    `Builder::connect_with(transport, main_fn)`; inbound handlers are
+//!    registered on the builder BEFORE connect_with via `.on_receive_request::<
+//!    Req,_>(..)` / `.on_receive_notification::<Notif,_>(..)` (+ `_from` peer-
+//!    filtered variants); outbound calls happen inside main_fn on the provided
+//!    `ConnectionTo<Client>` (`cx.send_request::<Req>(req)` → SentRequest, then
+//!    `.block_task().await`; `cx.send_notification::<N>(n)` fire-and-forget;
+//!    `cx.incoming_closed()` observes clean EOF). WHEN main_fn RETURNS THE
+//!    CONNECTION SHUTS DOWN — so this file's "actor select-loop" physically
+//!    lives INSIDE main_fn, parked on internal channels until ConnCmd::Shutdown
+//!    or child exit; outside handles talk TO it via those channels, never by
+//!    holding the loop themselves. Request callbacks receive a Responder<T> that
+//!    MUST be consumed exactly once (already pinned under PendingAcpRequest).
 
 pub mod normalize;
 
@@ -107,18 +146,20 @@ pub mod normalize;
 //     ///   1. tokio Command(plan.resolved_program or spec.program), args+env from
 //     ///      spec; stdin/stdout piped, stderr PIPED AND FORWARDED to tracing
 //     ///      (agents log there; stdout is ACP-only traffic); kill_on_drop(true).
-//     ///   2. Build the SDK client-side connection over `acp::Stdio`, registering
-//     ///      handlers BEFORE any traffic flies: inbound `SessionNotification`
-//     ///      handler + server->client request handler (routes
-//     ///      `RequestPermissionRequest` only; fs/terminal requests are answered
-//     ///      protocol-error since v0 advertises neither capability). Both handlers
-//     ///      forward onto an internal mpsc consumed by THIS actor's select loop.
-//     ///   3. Send `acp::InitializeRequest { protocol_version: V1,
-//     ///      client_capabilities: <none: no fs.read/writeTextFile, no terminal> }`
-//     ///      under INIT_TIMEOUT. Mismatch: negotiated < V1 => Err(AgentStart).
-//     ///      Empty `auth_methods` expected; NON-empty => Err whose message lists
-//     ///      each AuthMethod id (v0 has no auth UX — surface it honestly instead
-//     ///      of half-authenticating).
+//     ///   2. Build the SDK client-side connection over the manual ByteStreams
+//     ///      transport (SDK FACTS block at top of file — NOT acp::Stdio, that is
+//     ///      for a process's own stdio): register handlers BEFORE any traffic
+//     ///      flies — inbound `SessionNotification` notification handler + the
+//     ///      server->client REQUEST handler (routes `RequestPermissionRequest`
+//     ///      only; fs/terminal requests are answered protocol-error since v0
+//     ///      advertises neither capability). Both forward onto internal mpsc's
+//     ///      consumed by THIS actor's select loop (which runs INSIDE
+//     ///      connect_with's main_fn — see SDK FACTS #3).
+//     ///   3. Send `acp::InitializeRequest::new(ProtocolVersion::V1)` via
+//     ///      cx.send_request(..).block_task() under INIT_TIMEOUT (client caps:
+//     ///      none — no fs.read/writeTextFile, no terminal). Negotiated < V1 =>
+//     ///      Err(AgentStart). Empty `auth_methods` expected; NON-empty => Err
+//     ///      listing each AuthMethod id (v0 has no auth UX — surface honestly).
 //     ///   4. Publish Ready (see publish_lifecycle below). On ANY failure of steps
 //     ///      2–3 while attempts remain: kill child, sleep START_BACKOFF_MS[i],
 //     ///      retry from step 1. Attempts exhausted => Crashed + Err(AgentStart).

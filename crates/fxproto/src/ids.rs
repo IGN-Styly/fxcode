@@ -1,4 +1,3 @@
-use serde::{Deserialize,Serialize};
 //! Strongly-typed identifiers.
 //!
 //! Conventions:
@@ -6,6 +5,9 @@ use serde::{Deserialize,Serialize};
 //! - Serialize transparently: bare string on the wire, no `{ "AgentId": ... }`.
 //! - Derives: Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize (+ Debug).
 //! - Display impls forward to inner value (nice for tracing/logs).
+
+// Imports to restore as you define the types:
+// use serde::{Deserialize, Serialize};   // derive macros for every newtype below
 
 // WHO MINTS WHAT — read before implementing anything that creates ids:
 //
@@ -33,24 +35,12 @@ use serde::{Deserialize,Serialize};
 // - The uuid crate must NOT be added to fxproto's Cargo.toml: this crate is pure serde
 //   types; minting is fxcore's job (crates/fxcore/src/ids.rs IdGen).
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)] // bare string on the wire, no {"AgentId": ...}
-pub struct AgentId(String);
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct SessionId(String);
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct TurnId(String);
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct ToolCallId(String);
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct RequestId(String);
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct OptionId(String);
+// TODO: define the six id newtypes (all EXACTLY this shape):
+//
+// #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+// #[serde(transparent)] // bare string on the wire, no {"AgentId": ...}
+// pub struct AgentId(String);
+//     ...same pattern for SessionId, TurnId, ToolCallId, RequestId, OptionId.
 
 // Uniform API per id type (private inner field keeps clients from fabricating ids
 // by accident while still allowing reads for ACP calls and logging):

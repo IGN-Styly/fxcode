@@ -18,8 +18,35 @@
 // CLIENT half is handed to our AcpConnection's SDK builder in place of a child
 // process' stdio (start() gains a test-only variant or SpawnPlan transport
 // injection; see flagged note in tests/orchestrator.rs). The AGENT half drives
-// the SDK agent-side connection (role/acp.rs router) so wire framing, JSON-RPC
-// ids and ndjson line discipline are REAL — only the OS pipe is fake.
+// the SDK agent-side connection so wire framing, JSON-RPC ids and ndjson line
+// discipline are REAL — only the OS pipe is fake.
+//
+// BRIDGING FACTS (verified against SDK v1.3.0 source; see also acp/mod.rs SDK
+// INTEGRATION FACTS): transports are `acp::ByteStreams<OB, IB>` with FUTURES-IO
+// bounds, so each tokio DuplexStream half bridges via tokio_util::compat:
+//   client side: ByteStreams::new(client_io.compat_write(), agent-half…) — no.
+//   Concretely, for pair (a, b):
+//     CLIENT builder transport = ByteStreams::new(a.compat_write(), b.compat())
+//       outgoing=a (client writes), incoming=b (client reads)
+//     AGENT  builder transport = ByteStreams::new(b.compat_write(), a.compat())
+//   (.compat() adapts the tokio AsyncRead into futures::AsyncRead via
+//   FuturesAsyncReadCompatExt; .compat_write() the reverse. Import from
+//   tokio_util::compat::{TokioAsyncReadCompatExt, FuturesAsyncReadCompatExt}.)
+//
+// AGENT-SIDE MECHANICS: same Builder lifecycle as the client — register one
+// `.on_receive_request::<Req,_>(async |req, responder, cx| …)` handler PER
+// inbound method we must serve (InitializeRequest, NewSessionRequest,
+// PromptRequest) + CancelNotification as a notification handler
+// (`.on_receive_notification::<CancelNotification,_>`), then run
+// `connect_with(transport, main_fn)` where main_fn parks until the duplex
+// closes / Crash fires. Outbound from inside main_fn on the provided
+// ConnectionTo<Agent>-counterpart: notifications via
+// `cx.send_notification(SessionNotification { session_id, update, .. })`
+// (`send_request_to`/`send_notification_to` variants target peers explicitly);
+// session/request_permission is a normal request from agent→client whose
+// REQUEST callback hands us its Responder — answer it exactly once with
+// RequestPermissionResponse { outcome } when Step::AskPermission observes the
+// client's choice (or with Outcome::Cancelled on timeout/crash).
 
 // TODO:
 //
