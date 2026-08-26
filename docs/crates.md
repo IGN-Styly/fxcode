@@ -149,7 +149,10 @@ src/
                  first boot → serve. Graceful shutdown on SIGTERM/Ctrl-C (kills child agents).
   pair.rs        token lifecycle: generate (rand 32B, hex), chmod 600 file at
                  ~/.fxcode/token, print to stderr once; rotate subcommand
-  ifaddr.rs      pick listen addr: cfg.bind_override > `tailscale ip -4` / tailscaled
+  ifaddr.rs      BIND is cfg.bind_override else 0.0.0.0 (wildcard default: the
+                 token handshake is the security boundary). ADVERTISE the most
+                 plausible reachable ip for the startup hint: `tailscale ip -4`
+                 / tailscaled
                  LocalAPI socket > scan interfaces for 100.64.0.0/10 > 127.0.0.1.
                  NOTE: fxserver never joins the tailnet itself — the host's tailscaled
                  owns membership; we only bind to the interface it provides.
