@@ -1,3 +1,4 @@
+use serde::{Deserialize,Serialize};
 //! Strongly-typed identifiers.
 //!
 //! Conventions:
@@ -32,13 +33,25 @@
 // - The uuid crate must NOT be added to fxproto's Cargo.toml: this crate is pure serde
 //   types; minting is fxcore's job (crates/fxcore/src/ids.rs IdGen).
 
-// TODO: define one newtype per id. UNIFORM SHAPE — every wrapper looks like this:
-//
-// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-// #[serde(transparent)]                       // bare string on the wire, no {"AgentId": ...}
-// pub struct AgentId(String);
-// (repeat for SessionId, TurnId, ToolCallId, RequestId, OptionId)
-//
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)] // bare string on the wire, no {"AgentId": ...}
+pub struct AgentId(String);
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SessionId(String);
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TurnId(String);
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ToolCallId(String);
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RequestId(String);
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct OptionId(String);
+
 // Uniform API per id type (private inner field keeps clients from fabricating ids
 // by accident while still allowing reads for ACP calls and logging):
 //
