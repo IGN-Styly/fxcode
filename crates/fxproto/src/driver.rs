@@ -31,8 +31,8 @@ impl DriverId {
 /// HOW to spawn the agent binary. `program` is resolved via PATH unless it contains
 /// a path separator. Spec resolution precedence (fxcore/src/config.rs + detect.rs):
 ///   config override  >  autodetect result (PATH/known-locations probe)  >  the
-///   per-driver Default below. The Default is therefore a LAST RESORT that must be
-///   spawnable on a clean machine — not what detect.rs scans PATH for.
+///   per-driver [`DriverId::default_spec`] below. That is therefore a LAST RESORT
+///   that must be spawnable on a clean machine — not what detect.rs scans PATH for.
 ///
 /// PartialEq/Eq are not in the crates.md sketch but are required transitively:
 /// reply.rs `DetectedDriver` (which embeds a DriverSpec) derives PartialEq for
@@ -44,18 +44,6 @@ pub struct DriverSpec {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
-}
-
-impl Default for DriverSpec {
-    /// NOT used generically — call [`DriverId::default_spec`] instead; a bare
-    /// Default on an unkeyed spec has no meaning.
-    fn default() -> Self {
-        Self {
-            program: String::new(),
-            args: Vec::new(),
-            env: BTreeMap::new(),
-        }
-    }
 }
 
 impl DriverId {

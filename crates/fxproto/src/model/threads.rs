@@ -166,17 +166,21 @@ pub fn apply_thread(state: &mut ThreadsState, ev: &FxEvent) {
             ..
         } => {
             let ts = ensure(&mut state.threads, session, true);
-            let mergeable = matches!(&ts.flow.last(), Some(FlowItem::Message(i)) if ts.messages[*i].role == *role);
-            if mergeable {
-                if let Some(FlowItem::Message(i)) = ts.flow.last() {
-                    ts.messages[*i].text.push_str(text);
+            // W2: compare ONLY flow.last(). A same-role message index continues;
+            // anything else (empty flow | Tool card | role flip) starts a message.
+            let continue_at = match ts.flow.last() {
+                Some(FlowItem::Message(i)) if ts.messages[*i].role == *role => Some(*i),
+                _ => None,
+            };
+            match continue_at {
+                Some(i) => ts.messages[i].text.push_str(text),
+                None => {
+                    ts.messages.push(Message {
+                        role: *role,
+                        text: text.clone(),
+                    });
+                    ts.flow.push(FlowItem::Message(ts.messages.len() - 1));
                 }
-            } else {
-                ts.messages.push(Message {
-                    role: *role,
-                    text: text.clone(),
-                });
-                ts.flow.push(FlowItem::Message(ts.messages.len() - 1));
             }
         }
         FxEvent::ToolCallUpsert {

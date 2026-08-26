@@ -45,6 +45,10 @@ src/
                 Role, StopReason, ToolCallStatus/Kind
   command.rs    Command enum (client → server intent)
   reply.rs      Reply enum + FxError { code, message } — every command gets exactly one
+                NOTE: sketch line "DetectedAgents(...)" below is stale — serde's
+                internally-tagged enums cannot serialize a sequence newtype variant,
+                so the implemented form is DetectedAgents { drivers: Vec<DetectedDriver> }
+                (documented in reply.rs).
   event.rs      FxEvent enum (normalized; see architecture.md) + Sequenced<T> { seq, inner }
   envelope.rs   Message enum — everything that crosses the wire:
                   Hello { proto_version, token } / Welcome { server_version, head_seq }

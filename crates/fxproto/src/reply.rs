@@ -116,6 +116,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn every_error_code_wire_form_matches_as_str() {
+        // as_str must never drift from the serde-generated wire string; one source
+        // of truth checked exhaustively across all variants.
+        for code in [
+            FxErrorCode::UnknownCommand,
+            FxErrorCode::ProtocolVersion,
+            FxErrorCode::AuthFailed,
+            FxErrorCode::AgentNotFound,
+            FxErrorCode::AgentStartFailed,
+            FxErrorCode::SessionNotFound,
+            FxErrorCode::TurnNotActive,
+            FxErrorCode::PermissionNotFound,
+            FxErrorCode::StoreFailure,
+            FxErrorCode::Internal,
+        ] {
+            assert_eq!(
+                code.as_str(),
+                serde_json::to_string(&code).unwrap().trim_matches('"')
+            );
+        }
+    }
+
+    #[test]
     fn error_flattens_fields_and_display_matches_wire() {
         let e = FxError {
             code: FxErrorCode::SessionNotFound,

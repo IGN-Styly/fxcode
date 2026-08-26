@@ -94,12 +94,6 @@ pub struct Snapshot {
 
 // helper `Message::request(cmd)` auto-assigning ids? No — id assignment belongs to
 // the caller (ConnectionManager owns the counter). Keep this crate dumb.
-//
-// NOTE (doc drift, deliberate): docs/crates.md sketches this enum as tuple variants
-// Command(..)/Reply(..)/Event(Sequenced<FxEvent>) without correlation ids. That shape
-// cannot satisfy the correlation contract that command.rs/reply.rs require ("pairing is
-// by JSON-RPC-style correlation id added at the envelope layer"), so the named-field
-// Request/Response forms here supersede it. Update docs/crates.md when convenient.
 
 #[cfg(test)]
 mod tests {

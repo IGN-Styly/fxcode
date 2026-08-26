@@ -364,8 +364,6 @@ mod tests {
         apply_agent(&mut populated, &created_ev("s1", "b"));
 
         let bytes_populated = serde_json::to_string(&populated).unwrap();
-        let again = AgentsState::default();
-        let _ = again;
         // Determinism: identical reconstruction yields identical bytes.
         let mut rebuilt = AgentsState::default();
         apply_agent(&mut rebuilt, &status_ev("b", AgentStatus::Busy));
@@ -669,9 +667,9 @@ mod tests {
         }
     }
 
-    /// Drain a few detached events through an empty state — exercised for totality
-    /// and used to seed the fuzzer's variant space.
+    /// W8 smoke: AgentStatus must pass through threads.rs as a pure no-op.
     fn drain_unrelated(mut st: ThreadsState) -> ThreadsState {
+        let before = st.clone();
         apply_thread(
             &mut st,
             &FxEvent::AgentStatus {
@@ -680,6 +678,7 @@ mod tests {
                 status: AgentStatus::Ready,
             },
         );
+        assert_eq!(st, before, "AgentStatus leaked into thread state");
         st
     }
 
@@ -719,7 +718,7 @@ mod tests {
             }
         }
         assert_thread_invariants(&st);
-        let _ = drain_unrelated(ThreadsState::default()); // keep helper referenced
+        drain_unrelated(ThreadsState::default());
     }
 
     #[test]
@@ -832,10 +831,9 @@ mod tests {
     }
 
     // ========================================================================
-    // perms (apply_perms)
+    // perms (apply_perms) — PermsState/ResolvedPermission arrive via `super::*`
+    // (model's own flat re-exports); no separate import needed.
     // ========================================================================
-
-    use crate::model::perms::{PermsState, ResolvedPermission};
 
     #[test]
     fn p1_request_inserts_into_pending() {
