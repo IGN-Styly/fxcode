@@ -114,6 +114,11 @@ mod tests {
         let spec: DriverSpec = serde_json::from_str(json).unwrap();
         assert_eq!(spec.args, Vec::<String>::new());
         assert!(spec.env.is_empty());
-        assert_eq!(serde_json::to_string(&spec).unwrap(), json);
+        // Compact re-serialization fills in all fields (args/env are plain defaults,
+        // no skip_serializing_if), so compare VALUES across the trip.
+        assert_eq!(
+            serde_json::from_str::<DriverSpec>(&serde_json::to_string(&spec).unwrap()).unwrap(),
+            spec
+        );
     }
 }
