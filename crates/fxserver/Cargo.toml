@@ -1,0 +1,21 @@
+[package]
+name = "fxserver"
+description = "Thin daemon shell: config, pairing token, tailnet-bound WebSocket around fxcore"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "fxserver"
+path = "src/main.rs"
+
+[dependencies]
+axum = { workspace = true }
+fxcore = { workspace = true }
+fxproto = { workspace = true }
+futures = { workspace = true }
+rand = { workspace = true }
+subtle = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

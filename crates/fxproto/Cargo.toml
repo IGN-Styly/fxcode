@@ -1,0 +1,12 @@
+[package]
+name = "fxproto"
+description = "The contract: wire types + canonical state model shared by server and client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
