@@ -92,7 +92,7 @@ mod tests {
 
     #[test]
     fn every_frame_shape_is_pinned() {
-        let mut agents = AgentsState::default();
+        let agents = AgentsState::default();
         let mut threads = ThreadsState::default();
         threads.threads.entry(SessionId::from_raw("s".into())).or_default();
         threads.threads.get_mut(&SessionId::from_raw("s".into())).unwrap().cwd = PathBuf::from("/tmp");
