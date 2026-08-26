@@ -100,6 +100,13 @@ string_id!(OptionId);
 #[serde(transparent)]
 pub struct Seq(u64);
 impl Seq {
+    /// Constructor for the two legitimate builders ONLY: fxcore IdGen/EventStore
+    /// stamping fresh seqs and replay/rehydration reading them back from SQLite.
+    /// Everything else treats Seq as opaque and reads it via as_u64().
+    pub fn new(raw: u64) -> Self {
+        Self(raw)
+    }
+    // cursor persistence stores plain u64
     pub fn as_u64(self) -> u64 {
         self.0
     }
