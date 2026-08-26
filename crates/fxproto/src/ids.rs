@@ -97,6 +97,7 @@ string_id!(OptionId);
 // Wire note: #[serde(transparent)] on ALL of them — golden fixtures must contain bare
 // strings/u64, never newtype wrappers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct Seq(u64);
 impl Seq {
     pub fn as_u64(self) -> u64 {
@@ -106,5 +107,26 @@ impl Seq {
 impl Display for Seq {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.serialize_u64(self.0)
+    }
+}
+
+#[cfg(test)]
+mod wire_tests {
+    use super::*;
+    #[test]
+    fn seq_display_and_wire() {
+        let s = Seq(42);
+        assert_eq!(format!("{s}"), "42");
+        assert_eq!(serde_json::to_string(&s).unwrap(), "42"); // bare u64, no wrapper
+        let back: Seq = serde_json::from_str("42").unwrap();
+        assert_eq!(back.as_u64(), 42);
+    }
+    #[test]
+    fn agent_id_display_and_wire() {
+        let id = AgentId::from_raw("abc".into());
+        assert_eq!(format!("{id}"), "abc");
+        assert_eq!(serde_json::to_string(&id).unwrap(), "\"abc\""); // bare string
+        let back: AgentId = serde_json::from_str("\"abc\"").unwrap();
+        assert_eq!(back.as_str(), "abc");
     }
 }
