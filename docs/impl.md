@@ -15,18 +15,18 @@ milestone are dependency-ordered so nothing is stubbed twice.
 *Everything else consumes these; they're pure and fully unit-testable.*
 
 - [x] **0.1** `fxproto/src/ids.rs` — id newtypes + Seq. *Check: compiles; Display impls.*
-- [ ] **0.2** `fxproto/src/content.rs` — ContentBlock, Role, StopReason, Plan*, ToolCall*, McpServerSpec.
-- [ ] **0.3** `fxproto/src/driver.rs` — DriverId (+labels) and DriverSpec (+defaults).
-- [ ] **0.4** `fxproto/src/event.rs` — Sequenced<T>, FxEvent (incl. SessionCreated), AgentStatus, permission types.
-- [ ] **0.5** `fxproto/src/command.rs` + `reply.rs` — Command/Reply/FxError.
-- [ ] **0.6** `fxproto/src/envelope.rs` — Message enum, PROTO_VERSION, Snapshot (concrete shape).
-- [ ] **0.7** Serde golden tests: round-trip fixtures of every variant. *Check: `cargo test -p fxproto`.*
+- [x] **0.2** `fxproto/src/content.rs` — ContentBlock, Role, StopReason, Plan*, ToolCall*, McpServerSpec.
+- [x] **0.3** `fxproto/src/driver.rs` — DriverId (+labels) and DriverSpec (+defaults).
+- [x] **0.4** `fxproto/src/event.rs` — Sequenced<T>, FxEvent (incl. SessionCreated), AgentStatus, permission types.
+- [x] **0.5** `fxproto/src/command.rs` + `reply.rs` — Command/Reply/FxError.
+- [x] **0.6** `fxproto/src/envelope.rs` — Message enum, PROTO_VERSION, Snapshot (concrete shape).
+- [x] **0.7** Serde golden tests: round-trip fixtures of every variant. *Check: `cargo test -p fxproto`.*
 
 ## Phase 1 — Shared brain (fxproto::model)
 
-- [ ] **1.1** `model/agents.rs`, `threads.rs`, `perms.rs` — states + folds per their trigger maps.
+- [x] **1.1** `model/agents.rs`, `threads.rs`, `perms.rs` — states + folds per their trigger maps.
   Derive Serialize/Deserialize (Snapshot needs them).
-- [ ] **1.2** Fold property tests: any event into fresh state ⇒ valid state. Delivery is
+- [x] **1.2** Fold property tests: any event into fresh state ⇒ valid state. Delivery is
   exactly-once (see model/mod.rs contract), so idempotence claims are scoped to
   keyed/upsert events (ToolCallUpsert, PermissionResolved); append-shaped events (Chunk,
   SessionCreated) must NOT be re-applied. Chunk merging collapses consecutive same-role
