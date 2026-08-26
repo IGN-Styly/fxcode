@@ -602,14 +602,27 @@ async fn drive_session(
     };
 
     // ---- Phase B: Subscribe EXACTLY ONCE ------------------------------------
-    if handle
-        .try_send(Message::Subscribe {
-            last_seq: Seq::new(last_seq),
-        })
-        .is_err()
-    {
+    // Liveness rule: the link is Ready the moment OUR Subscribe is on the wire.
+    // The server guarantees replay-then-live in stream order, so any early
+    // events fold while we sit at Ready (ingest keeps that promotion as a
+    // belt-and-braces for snapshot paths). Pinning Ready to the FIRST event
+    // instead wedged fresh servers with EMPTY logs forever — Welcome followed
+    // by silence is a valid terminal handshake state (2026-08 live bug: the
+    // app sat on Connecting against a brand-new data dir).
+    let subscribed = handle.try_send(Message::Subscribe {
+        last_seq: Seq::new(last_seq),
+    });
+    if let Err(_send_err) = subscribed {
         return SessionEnd::Retryable;
     }
+    this.update(cx, |m, cx| {
+        if m.status != ConnStatus::Ready {
+            m.set_status(ConnStatus::Ready, cx);
+            m.had_ready_link = true;
+            *was_ready = true;
+        }
+    })
+    .ok();
 
     // ---- Phase C: live tail (replay batch first, then steady stream) --------
     loop {
