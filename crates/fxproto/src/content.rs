@@ -19,10 +19,28 @@ pub enum ContentBlock {
         media_type: String,
         data: String, /* base64 */
     },
-    // EmbeddedResource later (ACP supports it) — add when first needed.
+    /// Inline file/resource an agent embeds instead of plain text — the ACP
+    /// "resource" content block (MCP EmbeddedResource shape). Splits at our seam:
+    /// `uri` + `media_type` are scalars; the payload is either UTF-8 text or raw
+    /// base64, distinguished ON THE WIRE by the tagged `contents` wrapper so
+    /// consumers never guess from the mime type.
+    Resource {
+        uri: String,
+        media_type: String,
+        contents: ResourceContents,
+    },
 }
 //     media_type stays a plain String (mime strings are open-ended; an enum would churn
 //     against agent vendors). Eq/PartialEq: golden tests assert structural equality.
+
+/// Payload of [`ContentBlock::Resource`] — maps ACP's TextResourceContents /
+/// BlobResourceContents pair.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResourceContents {
+    Text { text: String },
+    Blob { blob: String }, // base64
+}
 
 /// Speaker of a Chunk. Thought-chunks are deliberately NOT a Role yet: their shape
 /// is an open decision parked in fxcore normalize.rs ("own variant vs Chunk w/ role?
@@ -130,6 +148,34 @@ mod tests {
             img,
             r#"{"type":"image","media_type":"image/png","data":"AAAA"}"#
         );
+    }
+
+    #[test]
+    fn embedded_resource_wire_shape() {
+        let file = ContentBlock::Resource {
+            uri: "file:///src/main.rs".into(),
+            media_type: "text/x-rust".into(),
+            contents: ResourceContents::Text { text: "fn main() {}".into() },
+        };
+        let json = serde_json::to_string(&file).unwrap();
+        assert_eq!(
+            json,
+            concat!(
+                r#"{"type":"resource","uri":"file:///src/main.rs","media_type":"text/x-rust","#,
+                r#""contents":{"type":"text","text":"fn main() {}"}}"#,
+            )
+        );
+        let back: ContentBlock = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, file);
+
+        let bin = ContentBlock::Resource {
+            uri: "file:///a.bin".into(),
+            media_type: "application/octet-stream".into(),
+            contents: ResourceContents::Blob { blob: "AAEC".into() },
+        };
+        let json = serde_json::to_string(&bin).unwrap();
+        assert!(json.contains(r#""contents":{"type":"blob","blob":"AAEC"}"#), "{json}");
+        assert_eq!(serde_json::from_str::<ContentBlock>(&json).unwrap(), bin);
     }
 
     #[test]
