@@ -176,6 +176,9 @@ pub struct ConnectionManager {
 
     url: Option<String>,
     token: Option<String>,
+    /// One DetectAgents per link (refreshed on reconnect so newly installed
+    /// agents appear without app restart).
+    detect_requested: bool,
     state_file_dir: PathBuf, // injectable seam for tests; default ~/.fxcode
     stored: ClientState,     // cursor durability seed; mutated on ingest
 
@@ -232,6 +235,7 @@ impl ConnectionManager {
                 pending: HashMap::new(),
                 url,
                 token,
+                detect_requested: false,
                 state_file_dir,
                 stored,
                 rtt_ms: 0,
@@ -344,6 +348,19 @@ impl ConnectionManager {
         self.pending.clear();
         self.cmd_tx = Some(out_tx);
         self.rtt_ms = 0;
+        self.detect_requested = false;
+    }
+
+    /// Fire-and-forget DetectAgents ONCE per link. Called exactly when Ready is
+    /// promoted so the composer picker has data by first paint of a thread.
+    fn request_detect_agents(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.detect_requested {
+            return;
+        }
+        self.detect_requested = true;
+        if let Ok(task) = self.send(Command::DetectAgents, cx) {
+            task.detach();
+        }
     }
 
     /// Fail-fast policy application point; also tears transient link state down
@@ -398,9 +415,15 @@ impl ConnectionManager {
                 }
                 self.set_status(ConnStatus::Ready, cx);
                 self.had_ready_link = true;
+                self.request_detect_agents(cx);
                 Ok(true)
             }
             Message::Response { id, reply } => {
+                if let Reply::DetectedAgents { drivers } = &reply {
+                    // Central stash so ANY view (not just the awaiting caller)
+                    // renders the picker immediately; waiter still resolves.
+                    cx.global_mut::<AppState>().record_detected(drivers.clone());
+                }
                 match self.pending.remove(&id) {
                     Some(waiter) => {
                         // bounded(1): buffer absorbs the reply even though the
@@ -439,6 +462,7 @@ impl ConnectionManager {
             tracing::warn!(error = %error, "cursor save failed");
         }
 
+        self.request_detect_agents(cx);
         if self.status == ConnStatus::Ready {
             Ok(false)
         } else {
@@ -621,6 +645,7 @@ async fn drive_session(
             m.had_ready_link = true;
             *was_ready = true;
         }
+        m.request_detect_agents(cx);
     })
     .ok();
 

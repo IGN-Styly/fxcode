@@ -7,17 +7,20 @@ use gpui::{
     Pixels, ScrollStrategy, SharedString, Size, StatefulInteractiveElement as _, Styled as _,
     Window, div, px,
 };
+use gpui_component::Disableable as _;
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{ActiveTheme as _, Sizable as _, VirtualListScrollHandle};
 
 use fxproto::command::Command;
 use fxproto::content::ContentBlock;
-use fxproto::ids::{SessionId, ToolCallId};
+use fxproto::driver::DriverId;
+use fxproto::ids::{AgentId, SessionId, ToolCallId};
 use fxproto::model::{FlowItem, ThreadState};
+use fxproto::reply::Reply;
 
-use crate::conn::ConnectionManager;
-use crate::store::AppState;
+use crate::conn::{ConnectionManager, SendError};
+use crate::store::{AppState, DriverRow};
 use crate::views::{dom_ids, message, tool_call};
 
 // DATA SOURCE (exact paths, all read-only):
@@ -60,6 +63,16 @@ pub struct ThreadView {
     stick: bool,
     plan_collapsed: bool,
     last_seen_flow_len: usize,
+    // ---- first-turn (t3 parity) surface ------------------------------------
+    /// Composer-side agent selection (t3: ModelPickerSidebar, no spawn on pick).
+    chosen_driver: Option<DriverId>,
+    cwd_input: gpui::Entity<InputState>,
+    /// Inline ProviderStatusBanner analogue; cleared on next attempt.
+    setup_error: Option<String>,
+    /// Draft preserved across a failed pipeline so Retry restores the composer.
+    last_failed_draft: Option<String>,
+    /// t3's isSendBusy: freeze the sender while the create-session pipeline runs.
+    busy: bool,
     _subscription: gpui::Subscription,
 }
 
@@ -73,6 +86,20 @@ impl ThreadView {
         let composer = cx
             .new(|cx| InputState::new(window, cx).placeholder("Message the agent…  (Enter sends)"));
 
+        // t3 "project" ≈ our cwd: it IS the working directory. Default mirrors the
+        // compose-in-empty-state behavior — server home via "~", user-editable.
+        let initial_cwd = cx
+            .global::<AppState>()
+            .last_cwd
+            .clone()
+            .unwrap_or_else(|| "~".to_string());
+        let cwd_input = cx.new(|cx| {
+            let mut st =
+                InputState::new(window, cx).placeholder("Working directory  (~ = server home)");
+            st.set_value(initial_cwd, window, cx);
+            st
+        });
+
         let _subscription = cx.subscribe_in(
             &composer,
             window,
@@ -82,11 +109,20 @@ impl ThreadView {
                 }
             },
         );
+        // Re-render on every fold/detect mutation (see store/mod.rs contract).
+        let _global_observation = cx.observe_global::<AppState>(|_: &mut Self, cx| {
+            cx.notify();
+        });
 
         let mut this = Self {
             active_session: None,
             manager,
             composer,
+            cwd_input,
+            chosen_driver: None,
+            setup_error: None,
+            last_failed_draft: None,
+            busy: false,
             scroll_handle: VirtualListScrollHandle::new(),
             expanded_tools: HashSet::new(),
             stick: true,
@@ -128,10 +164,17 @@ impl ThreadView {
 
     fn send_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let draft = self.composer.read(cx).value().trim().to_string();
-        if draft.is_empty() {
+        if draft.is_empty() || self.busy {
             return;
         }
         let Some(session) = self.active_session.clone() else {
+            // t3 flow: the composer IS the session creator. Optimistic clear here
+            // (window is in scope); failures restore text via the Retry button.
+            let cwd_text = self.cwd_input.read(cx).value().trim().to_string();
+            let driver = self.chosen_driver;
+            self.composer
+                .update(cx, |state, cx| state.set_value("", window, cx));
+            self.start_first_turn(draft, driver, cwd_text, cx);
             return;
         };
         // Clear optimistically — Prompt yields NO local transcript echo; the user's
@@ -156,6 +199,190 @@ impl ThreadView {
         };
         // Draft untouched on Cancel (locked decision).
         dispatch(&self.manager, Command::Cancel { session }, cx);
+    }
+
+    // -----------------------------------------------------------------------
+    // First-turn pipeline (t3code parity: typing = create everything lazily)
+    //
+    // FXPROTO CHOREOGRAPHY (5-command surface): DetectAgents informs the picker;
+    // if a running process of the chosen driver exists we reuse it, else
+    // StartAgent → NewSession{agent, cwd} → Prompt. Each Reply is awaited in
+    // order inside ONE spawned task so users never see intermediate screens —
+    // exactly t3's "send starts the thread" behavior with our server contract.
+    // -----------------------------------------------------------------------
+    #[allow(clippy::too_many_arguments)]
+    fn start_first_turn(
+        &mut self,
+        draft: String,
+        driver: Option<DriverId>,
+        cwd_text: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.busy = true;
+        self.setup_error = None;
+        self.last_failed_draft = Some(draft.clone());
+        let manager = self.manager.clone();
+        cx.spawn(async move |this, cx| {
+            async fn step(
+                manager: gpui::WeakEntity<ConnectionManager>,
+                command: Command,
+                cx: &mut gpui::AsyncApp,
+            ) -> Result<Reply, String> {
+                let task = manager
+                    .update(cx, |m, cx| m.send(command, cx))
+                    .map_err(|_| "connection lost".to_string())?
+                    .map_err(|e| match e {
+                        SendError::NotReady => "not connected yet".to_string(),
+                        SendError::Transport => "send failed".to_string(),
+                        SendError::ConnectionLost => "connection lost".to_string(),
+                    })?;
+                task.await
+                    .map_err(|_| "connection lost".to_string())
+                    .and_then(|reply| match reply {
+                        Reply::Error(err) => Err(err.to_string()),
+                        other => Ok(other),
+                    })
+            }
+
+            let fail = |this: &gpui::WeakEntity<Self>, msg: String, cx: &mut gpui::AsyncApp| {
+                this.update(cx, |m, _cx| {
+                    m.busy = false;
+                    m.setup_error = Some(msg);
+                })
+                .ok();
+            };
+
+            // 0) DetectAgents-driven picker state.
+            let rows = cx.update(|cx| cx.global::<AppState>().found_drivers());
+            let found: Vec<DriverRow> = rows.iter().filter(|r| r.found).cloned().collect();
+            if found.is_empty() {
+                fail(
+                    &this,
+                    "No installable agents detected on the server".into(),
+                    cx,
+                );
+                return;
+            }
+            let driver = driver
+                .filter(|d| found.iter().any(|r| r.driver == *d))
+                .or_else(|| found.first().map(|r| r.driver))
+                .expect("non-empty found list");
+
+            // 1) reuse a running process of that driver or spawn one.
+            let agent_id: AgentId = if let Some(id) =
+                cx.update(|cx| cx.global::<AppState>().running_agent_for(driver))
+            {
+                id
+            } else {
+                match step(manager.clone(), Command::StartAgent { driver }, cx).await {
+                    Ok(Reply::Started { agent }) => agent,
+                    Err(msg) => {
+                        fail(
+                            &this,
+                            format!("{} failed to start — {msg}", driver.label()),
+                            cx,
+                        );
+                        return;
+                    }
+                    Ok(other) => {
+                        fail(&this, format!("unexpected StartAgent reply {other:?}"), cx);
+                        return;
+                    }
+                }
+            };
+
+            // 2) session anchored at cwd (our "project").
+            let cwd = expand_tilde(&cwd_text);
+            let new_session_reply = step(
+                manager.clone(),
+                Command::NewSession {
+                    agent: agent_id.clone(),
+                    cwd,
+                    mcp_servers: vec![],
+                },
+                cx,
+            )
+            .await;
+            let session: SessionId = match new_session_reply {
+                Ok(Reply::SessionCreated { session }) => session,
+                Err(msg) => {
+                    fail(&this, format!("could not open a session — {msg}"), cx);
+                    return;
+                }
+                Ok(other) => {
+                    fail(&this, format!("unexpected NewSession reply {other:?}"), cx);
+                    return;
+                }
+            };
+
+            // 3) select + fire the turn; transcript streams via events.
+            if this
+                .update(cx, |m, _| m.set_active_session_raw(session.clone()))
+                .is_err()
+            {
+                return;
+            }
+            let prompt_result = step(
+                manager.clone(),
+                Command::Prompt {
+                    session: session.clone(),
+                    blocks: vec![ContentBlock::Text {
+                        text: draft.clone(),
+                    }],
+                },
+                cx,
+            )
+            .await;
+
+            this.update(cx, |m, cx| {
+                m.busy = false;
+                // Persist the project for next launch (t3 remembers projects too).
+                m.remember_cwd(&cwd_text, cx);
+                if let Err(msg) = prompt_result {
+                    m.setup_error = Some(format!("turn did not start — {msg}"));
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Render-time path into set_active_session without a Window argument.
+    fn set_active_session_raw(&mut self, session: SessionId) -> bool {
+        if self.active_session.as_ref() == Some(&session) {
+            return false;
+        }
+        self.active_session = Some(session);
+        self.stick = true;
+        true
+    }
+
+    fn remember_cwd(&self, cwd: &str, cx: &mut Context<Self>) {
+        cx.global_mut::<AppState>().last_cwd = Some(cwd.to_string());
+    }
+
+    fn cycle_driver(&mut self, direction: i32, cx: &mut Context<Self>) {
+        let found: Vec<DriverRow> = cx
+            .global::<AppState>()
+            .found_drivers()
+            .into_iter()
+            .filter(|r| r.found)
+            .collect();
+        if found.is_empty() {
+            // Nothing installed: nudge detection again through the manager.
+            dispatch_detect(&self.manager, cx);
+            return;
+        }
+        let current = self
+            .chosen_driver
+            .or_else(|| found.first().map(|r| r.driver));
+        let idx = current
+            .and_then(|c| found.iter().position(|r| r.driver == c))
+            .unwrap_or(0);
+        let len = found.len() as i32;
+        let next = ((idx as i32) + direction).rem_euclid(len) as usize;
+        self.chosen_driver = Some(found[next].driver);
+        cx.notify();
     }
 
     fn toggle_tool(&mut self, id: ToolCallId, cx: &mut Context<Self>) {
@@ -216,6 +443,29 @@ impl ThreadView {
     }
 }
 
+/// Resolve "~" / "~/…" against the CLIENT machine's $HOME — the string travels
+/// to the server verbatim as NewSession.cwd, so "~" is only meaningful when the
+/// server and client share a home layout (documented in the picker tooltip).
+fn expand_tilde(input: &str) -> std::path::PathBuf {
+    if input == "~" {
+        std::env::var("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_default()
+    } else if let Some(rest) = input.strip_prefix("~/") {
+        let home = std::env::var("HOME").unwrap_or_default();
+        std::path::PathBuf::from(home).join(rest)
+    } else {
+        std::path::PathBuf::from(input)
+    }
+}
+
+fn dispatch_detect(manager: &gpui::WeakEntity<ConnectionManager>, cx: &mut Context<ThreadView>) {
+    // WeakEntity::update yields a Result; flatten before detaching the task.
+    if let Ok(Ok(task)) = manager.update(cx, |m, cx| m.send(Command::DetectAgents, cx)) {
+        task.detach();
+    }
+}
+
 fn dispatch(
     manager: &gpui::WeakEntity<ConnectionManager>,
     command: Command,
@@ -231,21 +481,220 @@ fn dispatch(
     }
 }
 
+impl ThreadView {
+    /// t3code parity surface (`IndexDraftLanding` + composer agent rail):
+    /// "What should we build?" — type anything; agent+folder sit AT the
+    /// composer; sending lazily spawns agent → session → turn. found:false rows
+    /// stay visible as install hints (data, not errors).
+    fn render_first_turn(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        use gpui_component::h_flex;
+
+        let theme = cx.theme();
+        let rows = cx.global::<AppState>().found_drivers();
+        let selected_row: Option<DriverRow> = self
+            .chosen_driver
+            .as_ref()
+            .and_then(|d| rows.iter().find(|r| r.driver == *d))
+            .or_else(|| rows.iter().find(|r| r.found))
+            .cloned();
+        if self.chosen_driver.is_none() {
+            self.chosen_driver = selected_row.as_ref().map(|r| r.driver);
+        }
+        let any_found = rows.iter().any(|r| r.found);
+
+        let (chip_label, dot_color): (String, gpui::Hsla) = match (&selected_row, any_found) {
+            (Some(row), _) => (
+                row.label(),
+                if row.found {
+                    theme.success
+                } else {
+                    theme.muted_foreground
+                },
+            ),
+            (None, true) => ("…".to_string(), theme.muted_foreground),
+            (None, false) => ("Detecting agents…".to_string(), theme.muted_foreground),
+        };
+
+        // ── inline error banner (ProviderStatusBanner analogue) + Retry/Dismiss ──
+        let banner = self.setup_error.clone().map(|msg| {
+            h_flex()
+                .id(dom_ids::SETUP_BANNER)
+                .w_full()
+                .px_2()
+                .py(px(4.0))
+                .gap_2()
+                .bg(theme.danger.opacity(0.12))
+                .text_color(theme.danger)
+                .text_size(px(12.0))
+                .child(div().flex_1().overflow_hidden().child(format!(
+                    "{msg}  —  your message was kept; press Retry to send again."
+                )))
+                .child(
+                    Button::new("setup-retry")
+                        .label("Retry")
+                        .small()
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                            let draft = this.last_failed_draft.take().unwrap_or_default();
+                            this.setup_error = None;
+                            this.composer
+                                .update(cx, |state, cx| state.set_value(draft, window, cx));
+                            this.send_prompt(window, cx);
+                        })),
+                )
+                .child(
+                    Button::new("setup-dismiss")
+                        .label("✕")
+                        .small()
+                        .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                            this.setup_error = None;
+                            this.last_failed_draft = None;
+                            cx.notify();
+                        })),
+                )
+        });
+
+        // ── agent rail + folder field ABOVE the composer (t3 composer annexes) ──
+        let driver_bar = h_flex()
+            .w_full()
+            .px_2()
+            .py(px(4.0))
+            .gap_1()
+            .border_t_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .id(dom_ids::CWD_INPUT)
+                    .flex_1()
+                    .max_w(px(360.0))
+                    .child(Input::new(&self.cwd_input)),
+            )
+            .child(
+                Button::new(dom_ids::AGENT_PREV)
+                    .label("◂")
+                    .small()
+                    .on_click(
+                        cx.listener(|this, _: &ClickEvent, _w, cx| this.cycle_driver(-1, cx)),
+                    ),
+            )
+            .child(
+                div()
+                    .id(dom_ids::AGENT_CHIP)
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .px_2()
+                    .py(px(3.0))
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.border)
+                    .bg(theme.secondary)
+                    .text_size(px(12.0))
+                    .text_color(theme.foreground)
+                    .cursor_pointer()
+                    .hover(|st| st.bg(theme.secondary_hover))
+                    .child(div().size(px(7.0)).rounded_full().bg(dot_color))
+                    .child(chip_label)
+                    .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                        // Chip click re-probes when nothing is installed yet.
+                        if !cx
+                            .global::<AppState>()
+                            .found_drivers()
+                            .iter()
+                            .any(|r| r.found)
+                        {
+                            dispatch_detect(&this.manager, cx);
+                        }
+                    })),
+            )
+            .child(
+                Button::new(dom_ids::AGENT_NEXT)
+                    .label("▸")
+                    .small()
+                    .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| this.cycle_driver(1, cx))),
+            );
+
+        let mut column = h_flex().size_full().flex_col().bg(theme.background);
+
+        // Hero copy (DraftHeroHeadline analogue).
+        column = column.child(
+            div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .max_w(px(520.0))
+                        .text_center()
+                        .child(
+                            div()
+                                .text_size(px(20.0))
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .text_color(theme.foreground)
+                                .child("What should we build?"),
+                        )
+                        .child(
+                            div()
+                                .mt_2()
+                                .text_size(px(13.0))
+                                .text_color(theme.muted_foreground)
+                                .child("Pick an agent and a working directory, then start typing."),
+                        ),
+                ),
+        );
+
+        if let Some(banner) = banner {
+            column = column.child(banner);
+        }
+        column = column.child(driver_bar);
+
+        // Composer row: Send doubles as the creator button while busy-latched.
+        let send_label = if self.busy { "Starting…" } else { "Send" };
+        let mut composer_row = h_flex()
+            .p_2()
+            .gap_2()
+            .border_t_1()
+            .border_color(theme.border)
+            .items_end()
+            .child(
+                div()
+                    .id(dom_ids::COMPOSER)
+                    .flex_1()
+                    .child(Input::new(&self.composer)),
+            );
+        if !self.busy {
+            composer_row =
+                composer_row.child(
+                    Button::new(dom_ids::SEND_TURN)
+                        .primary()
+                        .label(send_label)
+                        .small()
+                        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                            this.send_prompt(window, cx)
+                        })),
+                );
+        } else {
+            composer_row = composer_row.child(
+                Button::new(dom_ids::SEND_TURN)
+                    .primary()
+                    .disabled(true)
+                    .label(send_label)
+                    .small(),
+            );
+        }
+        column = column.child(composer_row);
+
+        column.into_any_element()
+    }
+}
+
 impl gpui::Render for ThreadView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
         let Some(session) = self.active_session.clone() else {
-            // STATE: empty — nothing selected yet.
-            return div()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(theme.background)
-                .text_color(theme.muted_foreground)
-                .child("No session selected — pick one in the sidebar")
-                .into_any_element();
+            return self.render_first_turn(cx);
         };
 
         let Some(thread_state) = cx

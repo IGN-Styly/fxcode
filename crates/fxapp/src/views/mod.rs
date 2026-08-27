@@ -45,6 +45,12 @@ pub(crate) mod dom_ids {
     pub const CONNECT_SUBMIT: &str = "connect-submit";
     pub const CONNECT_ERROR: &str = "connect-error";
     pub const CONNECT_DISMISS: &str = "connect-dismiss";
+    // ── first-turn / t3-parity onboarding surface (views/thread.rs) ──
+    pub const AGENT_PREV: &str = "agent-prev";
+    pub const AGENT_NEXT: &str = "agent-next";
+    pub const AGENT_CHIP: &str = "agent-chip";
+    pub const CWD_INPUT: &str = "cwd-input";
+    pub const SETUP_BANNER: &str = "setup-banner";
 
     pub struct AgentRowIds {
         pub row: SharedString,
@@ -157,6 +163,13 @@ impl WorkspaceView {
             cx.new(|cx| ThreadView::new(manager_weak.clone(), initial.clone(), window, cx));
 
         let mut subscriptions = Vec::new();
+        // store/mod.rs contract: globals mutate ⇒ observe_global fires ⇒ notify.
+        // Without this the dock paints once and never reacts to the event log.
+        subscriptions.push(
+            cx.observe_global::<AppState>(|_this, cx: &mut gpui::Context<Self>| {
+                cx.notify();
+            }),
+        );
         let thread_for_sub = thread.clone();
         subscriptions.push(cx.subscribe(&sidebar, move |this, _sidebar, event, cx| {
             match event {

@@ -24,6 +24,9 @@ use fxproto::model::apply_perms;
 use fxproto::model::apply_thread;
 
 use crate::conn::ConnStatus; // SINGLE definition lives in conn/mod.rs
+use fxproto::ids::AgentId;
+use fxproto::reply::DetectedDriver;
+use std::collections::HashSet;
 
 #[derive(Clone, Debug)]
 pub struct AppState {
@@ -31,6 +34,13 @@ pub struct AppState {
     pub agents: AgentsState,
     pub threads: ThreadsState,
     pub perms: PermsState,
+    /// Latest DetectAgents answer (refreshed per link by ConnectionManager).
+    /// Drives the t3-style composer-side agent picker: found rows are selectable,
+    /// not-found rows render as install hints (data, not errors — reply.rs).
+    pub detected: Vec<DetectedDriver>,
+    /// Last working-directory the user launched a session with (t3code "project"
+    /// equivalent: our protocol has no project entity, so cwd IS the project).
+    pub last_cwd: Option<String>,
 }
 
 impl Default for AppState {
@@ -40,6 +50,8 @@ impl Default for AppState {
             agents: AgentsState::default(),
             threads: ThreadsState::default(),
             perms: PermsState::default(),
+            detected: Vec::new(),
+            last_cwd: None,
         }
     }
 }
@@ -93,6 +105,89 @@ impl AppState {
         self.perms = snapshot.perms.clone();
         snapshot.baseline_seq.as_u64()
     }
+
+    /// Rows whose driver was actually FOUND on the server machine, in stable
+    /// DriverId order — the picker's selectable universe.
+    pub fn found_drivers(&self) -> Vec<DriverRow> {
+        let mut rows: Vec<DriverRow> = self
+            .detected
+            .iter()
+            .map(|d| DriverRow {
+                driver: d.driver,
+                found: d.found,
+                version: d.version.clone(),
+                spec_program: d.spec_used.program.clone(),
+            })
+            .collect();
+        // Fill gaps so every DriverId always renders (unfound = install hint).
+        let present: HashSet<_> = rows.iter().map(|r| r.driver).collect();
+        for all in enum_driver_ids() {
+            if !present.contains(&all) {
+                rows.push(DriverRow {
+                    driver: all,
+                    found: false,
+                    version: None,
+                    spec_program: String::new(),
+                });
+            }
+        }
+        rows.sort_by_key(|r| r.driver);
+        rows
+    }
+
+    /// A RUNNING process of exactly this driver (spawning counts: Starting may
+    /// still die; callers treat it as unavailable-but-in-flight). t3code spawns
+    /// lazily; we key off explicit AgentStatus events so replay stays truthful.
+    pub fn running_agent_for(&self, driver: fxproto::driver::DriverId) -> Option<AgentId> {
+        self.agents
+            .agents
+            .iter()
+            .find(|(_, st)| {
+                st.driver == driver
+                    && matches!(
+                        st.status,
+                        fxproto::event::AgentStatus::Ready | fxproto::event::AgentStatus::Busy
+                    )
+            })
+            .map(|(id, _)| id.clone())
+    }
+
+    /// Stash DetectAgents answers centrally; idempotent per link refresh.
+    pub fn record_detected(&mut self, drivers: Vec<DetectedDriver>) {
+        self.detected = drivers;
+    }
+}
+
+/// View-model row for the picker (keeps gpui views decoupled from reply types'
+/// full shape and makes "fill-unfound-gaps" logic unit-testable).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DriverRow {
+    pub driver: fxproto::driver::DriverId,
+    pub found: bool,
+    pub version: Option<String>,
+    pub spec_program: String,
+}
+
+impl DriverRow {
+    pub fn label(&self) -> String {
+        format!(
+            "{}{}",
+            self.driver.label(),
+            self.version
+                .as_deref()
+                .map(|v| format!(" · {v}"))
+                .unwrap_or_default()
+        )
+    }
+}
+
+fn enum_driver_ids() -> Vec<fxproto::driver::DriverId> {
+    use fxproto::driver::DriverId;
+    vec![
+        DriverId::ClaudeCode,
+        DriverId::GeminiCli,
+        DriverId::CodexCli,
+    ]
 }
 
 #[cfg(test)]

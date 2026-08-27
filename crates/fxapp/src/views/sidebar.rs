@@ -68,6 +68,11 @@ impl SidebarView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        // React to agent/session folds arriving over the link.
+        let _global_observation = cx.observe_global::<AppState>(|_: &mut Self, cx| {
+            cx.notify();
+        });
+
         let draft_input = cx.new(|cx| {
             InputState::new(window, cx).placeholder("working directory (e.g. ~/projects/x)")
         });
