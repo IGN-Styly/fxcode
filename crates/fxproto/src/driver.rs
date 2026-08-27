@@ -15,6 +15,8 @@ pub enum DriverId {
     ClaudeCode,
     GeminiCli,
     CodexCli,
+    /// OpenCode speaks ACP natively via `opencode acp` (opencode.ai/docs/acp).
+    OpenCode,
 }
 
 impl DriverId {
@@ -24,6 +26,7 @@ impl DriverId {
             DriverId::ClaudeCode => "Claude Code",
             DriverId::GeminiCli => "Gemini CLI",
             DriverId::CodexCli => "Codex CLI",
+            DriverId::OpenCode => "OpenCode",
         }
     }
 }
@@ -65,7 +68,13 @@ impl DriverId {
                 ],
             ),
             DriverId::GeminiCli => ("gemini", vec!["--acp".to_string()]),
-            DriverId::CodexCli => ("codex-acp", Vec::new()),
+            // Zed's adapter package — plain `codex` does NOT speak ACP.
+            // TODO(pre-M1): verify npm package name against zed-industries/codex-acp.
+            DriverId::CodexCli => (
+                "npx",
+                vec!["-y".to_string(), "@zed-industries/codex-acp".to_string()],
+            ),
+            DriverId::OpenCode => ("opencode", vec!["acp".to_string()]),
         };
         DriverSpec {
             program: program.into(),
@@ -84,6 +93,7 @@ mod tests {
         assert_eq!(DriverId::ClaudeCode.label(), "Claude Code");
         assert_eq!(DriverId::GeminiCli.label(), "Gemini CLI");
         assert_eq!(DriverId::CodexCli.label(), "Codex CLI");
+        assert_eq!(DriverId::OpenCode.label(), "OpenCode");
     }
 
     #[test]
@@ -100,7 +110,12 @@ mod tests {
         );
         assert!(claude.env.is_empty());
         assert_eq!(DriverId::GeminiCli.default_spec().program, "gemini");
-        assert_eq!(DriverId::CodexCli.default_spec().program, "codex-acp");
+        assert_eq!(
+            DriverId::CodexCli.default_spec().args,
+            vec!["-y", "@zed-industries/codex-acp"]
+        );
+        assert_eq!(DriverId::OpenCode.default_spec().program, "opencode");
+        assert_eq!(DriverId::OpenCode.default_spec().args, vec!["acp"]);
     }
 
     #[test]

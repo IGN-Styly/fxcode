@@ -137,6 +137,8 @@ fn scan_targets(id: DriverId) -> &'static [&'static str] {
         DriverId::ClaudeCode => &["claude-code-acp"],
         DriverId::GeminiCli => &["gemini"], // needs --acp arg at spawn time
         DriverId::CodexCli => &["codex-acp"],
+        // Native ACP subcommand (authoritative: opencode.ai/docs/acp).
+        DriverId::OpenCode => &["opencode"],
     }
 }
 
@@ -146,6 +148,7 @@ fn spawn_args(id: DriverId) -> &'static [&'static str] {
         DriverId::ClaudeCode => &[],
         DriverId::GeminiCli => &["--acp"],
         DriverId::CodexCli => &[],
+        DriverId::OpenCode => &["acp"],
     }
 }
 

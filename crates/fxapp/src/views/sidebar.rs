@@ -8,9 +8,9 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
-    ActiveTheme as _, Sizable as _,
+    ActiveTheme as _, Icon, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
-    input::{Input, InputState},
+    input::{Input, InputEvent, InputState},
 };
 
 use fxproto::event::AgentStatus;
@@ -43,6 +43,9 @@ use crate::views::dom_ids::{self, AgentRowIds};
 #[derive(Clone, Debug)]
 pub enum SidebarEvent {
     SessionSelected(SessionId),
+    /// t3 "New thread": clear the active thread so the hero composer shows.
+    /// No protocol traffic — the session materializes from the composer.
+    NewThreadRequested,
     /// User confirmed a new session on a Ready agent.
     NewSessionRequested {
         agent: AgentId,
@@ -58,6 +61,10 @@ pub struct SidebarView {
     /// Draft working-directory input; created eagerly (InputState construction needs a
     /// Window) and reused across drafts so typed text survives reopenings.
     draft_input: gpui::Entity<InputState>,
+    /// t3 header Search box (Sidebar.tsx aria "Search threads").
+    search_input: gpui::Entity<InputState>,
+    /// Lowercased live filter query; empty = show all.
+    query: String,
 }
 
 impl EventEmitter<SidebarEvent> for SidebarView {}
@@ -76,10 +83,23 @@ impl SidebarView {
         let draft_input = cx.new(|cx| {
             InputState::new(window, cx).placeholder("working directory (e.g. ~/projects/x)")
         });
+        let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
+        let _search_sub = cx.subscribe_in(
+            &search_input,
+            window,
+            |this, state, event: &InputEvent, _window, cx| {
+                if let InputEvent::Change = event {
+                    this.query = state.read(cx).value().trim().to_lowercase();
+                    cx.notify();
+                }
+            },
+        );
         Self {
             selected_session,
             open_draft_for: None,
             draft_input,
+            search_input,
+            query: String::new(),
         }
     }
 
@@ -169,6 +189,31 @@ impl gpui::Render for SidebarView {
             agents, threads, ..
         } = cx.global::<AppState>();
         let AgentsState { agents: agents_map } = agents;
+        let query_lc = self.query.to_lowercase();
+
+        // ── header: Search + New-thread compose button (t3 Sidebar.tsx) ──
+        let header = gpui_component::h_flex()
+            .w_full()
+            .gap_1()
+            .px_1()
+            .child(
+                div()
+                    .id(dom_ids::SIDEBAR_SEARCH)
+                    .flex_1()
+                    .child(Input::new(&self.search_input)),
+            )
+            .child(
+                Button::new(dom_ids::SIDEBAR_NEW_THREAD)
+                    .ghost()
+                    .small()
+                    .label("＋")
+                    .tooltip("New thread")
+                    .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                        this.selected_session = None;
+                        cx.emit(SidebarEvent::NewThreadRequested);
+                        cx.notify();
+                    })),
+            );
 
         let mut panel = gpui_component::v_flex()
             .id(dom_ids::SIDEBAR)
@@ -177,23 +222,99 @@ impl gpui::Render for SidebarView {
             .p_2()
             .gap_2()
             .bg(theme.background)
-            .child(
-                div()
-                    .text_size(px(11.0))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(theme.muted_foreground)
-                    .child("AGENTS"),
-            );
+            .child(header);
 
-        if agents_map.is_empty() {
-            // STATE: no-agents — Setup screen is M3 (gap note above).
-            return panel
+        // ── PROJECTS section (t3 groups threads by project; project == cwd) ──
+        panel = panel.child(
+            gpui_component::h_flex()
+                .gap_1()
+                .px_1()
                 .items_center()
-                .justify_center()
                 .text_color(theme.muted_foreground)
-                .child("No agents yet.")
-                .into_any_element();
+                .child(Icon::new(IconName::Folder).xsmall())
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .child("All projects"),
+                ),
+        );
+
+        let mut matched_any = false;
+        for (session_id, thread) in &threads.threads {
+            let (title, exists) = session_label(session_id, threads);
+            if !exists {
+                continue; // "(loading)" placeholder rows add noise to the rail
+            }
+            let path_text = thread.cwd.display().to_string();
+            if !query_lc.is_empty()
+                && !title.to_lowercase().contains(&query_lc)
+                && !path_text.to_lowercase().contains(&query_lc)
+            {
+                continue;
+            }
+            matched_any = true;
+            let selected = self.selected_session.as_ref() == Some(session_id);
+            let mut row = div()
+                .id(dom_ids::session_row(session_id))
+                .flex()
+                .flex_col()
+                .px_2()
+                .py(px(5.0))
+                .rounded(theme.radius)
+                .cursor_pointer()
+                .hover(|st| st.bg(theme.secondary_hover))
+                .when(selected, |r| r.bg(theme.accent))
+                .on_click(cx.listener({
+                    let session_id = session_id.clone();
+                    move |this, _: &ClickEvent, _window, cx| {
+                        this.select_session(session_id.clone(), cx)
+                    }
+                }))
+                .child(
+                    div()
+                        .text_size(px(13.0))
+                        .text_color(theme.foreground)
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.5))
+                        .text_color(theme.muted_foreground)
+                        .overflow_hidden()
+                        .child(path_text),
+                );
+            let _ = &mut row;
+            panel = panel.child(row);
         }
+        if threads.threads.is_empty() {
+            panel = panel.child(
+                div()
+                    .px_2()
+                    .text_size(px(12.0))
+                    .text_color(theme.muted_foreground)
+                    .child("No threads yet — start typing in the composer."),
+            );
+        } else if !matched_any && !query_lc.is_empty() {
+            panel = panel.child(
+                div()
+                    .px_2()
+                    .text_size(px(12.0))
+                    .text_color(theme.muted_foreground)
+                    .child("No matches."),
+            );
+        }
+
+        // ── AGENTS section: processes + their per-agent session affordances ──
+        panel = panel.child(
+            div()
+                .pt_2()
+                .px_1()
+                .text_size(px(11.0))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(theme.muted_foreground)
+                .child("AGENTS"),
+        );
 
         for (agent_id, agent_state) in agents_map {
             let AgentRowIds {
@@ -280,38 +401,6 @@ impl gpui::Render for SidebarView {
                                 ),
                         ),
                 );
-            }
-
-            for session_id in &agent_state.sessions {
-                let session_dom_id = dom_ids::session_row(session_id);
-                let (label, exists) = session_label(session_id, threads);
-                let selected = self.selected_session.as_ref() == Some(session_id);
-
-                let mut row = div()
-                    .id(session_dom_id)
-                    .flex()
-                    .items_center()
-                    .px_2()
-                    .py(px(3.0))
-                    .pl(px(24.0))
-                    .rounded(theme.radius)
-                    .text_size(px(13.0));
-
-                if exists {
-                    row = row
-                        .cursor_pointer()
-                        .hover(|s| s.bg(theme.secondary_hover))
-                        .when(selected, |r| r.bg(theme.accent))
-                        .on_click(cx.listener({
-                            let session_id = session_id.clone();
-                            move |this, _: &ClickEvent, _window, cx| {
-                                this.select_session(session_id.clone(), cx)
-                            }
-                        }));
-                } else {
-                    row = row.text_color(theme.muted_foreground);
-                }
-                group = group.child(row.child(label));
             }
 
             panel = panel.child(group);

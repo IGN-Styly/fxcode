@@ -136,6 +136,7 @@ fn driver_ids_and_specs() {
     rt(DriverId::ClaudeCode, "\"claude_code\"");
     rt(DriverId::GeminiCli, "\"gemini_cli\"");
     rt(DriverId::CodexCli, "\"codex_cli\"");
+    rt(DriverId::OpenCode, "\"open_code\"");
     // A config-style TOML/JSON spec without args/env deserializes (serde defaults).
     let spec: DriverSpec =
         serde_json::from_str(r#"{"program":"/usr/local/bin/codex-acp"}"#).unwrap();
@@ -375,7 +376,7 @@ fn golden_replies() {
         concat!(
             r#"{"type":"detected_agents","drivers":[{"driver":"claude_code","found":true,"version":"4.5","#,
             r#""spec_used":{"program":"npx","args":["-y","@agentclientprotocol/claude-agent-acp"],"env":{}}},"#,
-            r#"{"driver":"codex_cli","found":false,"version":null,"spec_used":{"program":"codex-acp","args":[],"env":{}}}]}"#,
+            r#"{"driver":"codex_cli","found":false,"version":null,"spec_used":{"program":"npx","args":["-y","@zed-industries/codex-acp"],"env":{}}}]}"#,
         ),
     );
     rt(

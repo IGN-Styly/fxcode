@@ -51,6 +51,9 @@ pub(crate) mod dom_ids {
     pub const AGENT_CHIP: &str = "agent-chip";
     pub const CWD_INPUT: &str = "cwd-input";
     pub const SETUP_BANNER: &str = "setup-banner";
+    // ── sidebar parity surface (t3code Sidebar.tsx) ──
+    pub const SIDEBAR_SEARCH: &str = "sidebar-search";
+    pub const SIDEBAR_NEW_THREAD: &str = "sidebar-new-thread";
 
     pub struct AgentRowIds {
         pub row: SharedString,
@@ -192,6 +195,12 @@ impl WorkspaceView {
                     // Optimistic focus: newer sessions sort last among uuid v7 keys;
                     // replay confirmation keeps the label fresh once known.
                     this.active_session = None;
+                }
+                SidebarEvent::NewThreadRequested => {
+                    // t3 "New thread": back to the hero card; nothing on the wire —
+                    // the session materializes lazily from the composer.
+                    this.active_session = None;
+                    thread_for_sub.update(cx, |view, cx| view.set_active_session(None, cx));
                 }
             }
         }));
