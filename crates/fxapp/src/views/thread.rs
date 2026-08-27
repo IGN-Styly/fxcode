@@ -631,7 +631,7 @@ impl ThreadView {
             .items_center()
             .justify_center();
 
-        if let Some(bn) = banner.clone() {
+        if let Some(bn) = banner {
             center = center.child(div().absolute().top_3().left_1_2().child(bn));
         }
 
