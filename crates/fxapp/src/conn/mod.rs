@@ -357,9 +357,13 @@ impl ConnectionManager {
         if self.detect_requested {
             return;
         }
-        self.detect_requested = true;
+        // Mark requested ONLY when the frame actually went out; a NotReady
+        // rejection must stay retryable on the next promotion path.
         if let Ok(task) = self.send(Command::DetectAgents, cx) {
+            self.detect_requested = true;
             task.detach();
+        } else {
+            tracing::debug!("DetectAgents deferred; link not yet eligible");
         }
     }
 

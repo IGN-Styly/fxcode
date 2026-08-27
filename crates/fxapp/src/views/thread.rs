@@ -482,38 +482,45 @@ fn dispatch(
 }
 
 impl ThreadView {
-    /// t3code parity surface (`IndexDraftLanding` + composer agent rail):
-    /// "What should we build?" — type anything; agent+folder sit AT the
-    /// composer; sending lazily spawns agent → session → turn. found:false rows
-    /// stay visible as install hints (data, not errors).
+    /// t3code parity surface (`IndexDraftLanding` + DraftHeroHeadline):
+    /// "What should we build?" over ONE rounded composer card containing the
+    /// agent rail, cwd field, prompt input. found:false rows stay visible as
+    /// install hints (data, not errors); the empty state IS a chat surface.
     fn render_first_turn(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         use gpui_component::h_flex;
 
         let theme = cx.theme();
+
+        // Three DISTINCT link-lifecycle states (2026-08 fix: the picker used to
+        // show "Detecting agents…" forever on servers with NOTHING installed):
+        //   detected empty  → probe still in flight
+        //   all found:false → probe DONE, nothing installed
+        //   some found      → selectable
         let rows = cx.global::<AppState>().found_drivers();
+        let detection_pending = cx.global::<AppState>().detected.is_empty();
+        let found_rows: Vec<DriverRow> = rows.iter().filter(|r| r.found).cloned().collect();
         let selected_row: Option<DriverRow> = self
             .chosen_driver
             .as_ref()
-            .and_then(|d| rows.iter().find(|r| r.driver == *d))
-            .or_else(|| rows.iter().find(|r| r.found))
+            .and_then(|d| found_rows.iter().find(|r| r.driver == *d))
+            .or_else(|| found_rows.first())
             .cloned();
         if self.chosen_driver.is_none() {
             self.chosen_driver = selected_row.as_ref().map(|r| r.driver);
         }
-        let any_found = rows.iter().any(|r| r.found);
 
-        let (chip_label, dot_color): (String, gpui::Hsla) = match (&selected_row, any_found) {
-            (Some(row), _) => (
-                row.label(),
-                if row.found {
-                    theme.success
-                } else {
-                    theme.muted_foreground
-                },
-            ),
-            (None, true) => ("…".to_string(), theme.muted_foreground),
-            (None, false) => ("Detecting agents…".to_string(), theme.muted_foreground),
+        let (chip_label, dot_color): (String, gpui::Hsla) = if detection_pending {
+            ("Detecting agents…".to_string(), theme.muted_foreground)
+        } else if found_rows.is_empty() {
+            (
+                "No agents installed — click to re-detect".to_string(),
+                theme.danger,
+            )
+        } else {
+            let row = selected_row.as_ref().expect("found list non-empty");
+            (row.label(), theme.success)
         };
+        let install_hint_visible = !detection_pending && found_rows.is_empty();
 
         // ── inline error banner (ProviderStatusBanner analogue) + Retry/Dismiss ──
         let banner = self.setup_error.clone().map(|msg| {
@@ -553,14 +560,10 @@ impl ThreadView {
                 )
         });
 
-        // ── agent rail + folder field ABOVE the composer (t3 composer annexes) ──
+        // ── agent rail + folder field INSIDE the card (t3 composer annexes) ──
         let driver_bar = h_flex()
             .w_full()
-            .px_2()
-            .py(px(4.0))
             .gap_1()
-            .border_t_1()
-            .border_color(theme.border)
             .child(
                 div()
                     .id(dom_ids::CWD_INPUT)
@@ -592,8 +595,6 @@ impl ThreadView {
                     .text_color(theme.foreground)
                     .cursor_pointer()
                     .hover(|st| st.bg(theme.secondary_hover))
-                    .child(div().size(px(7.0)).rounded_full().bg(dot_color))
-                    .child(chip_label)
                     .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                         // Chip click re-probes when nothing is installed yet.
                         if !cx
@@ -604,7 +605,9 @@ impl ThreadView {
                         {
                             dispatch_detect(&this.manager, cx);
                         }
-                    })),
+                    }))
+                    .child(div().size(px(7.0)).rounded_full().bg(dot_color))
+                    .child(chip_label),
             )
             .child(
                 Button::new(dom_ids::AGENT_NEXT)
@@ -613,59 +616,70 @@ impl ThreadView {
                     .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| this.cycle_driver(1, cx))),
             );
 
-        let mut column = h_flex().size_full().flex_col().bg(theme.background);
+        let mut column = h_flex()
+            .size_full()
+            .flex_col()
+            .relative()
+            .bg(theme.background);
 
-        // Hero copy (DraftHeroHeadline analogue).
-        column = column.child(
-            div()
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .max_w(px(520.0))
-                        .text_center()
-                        .child(
-                            div()
-                                .text_size(px(20.0))
-                                .font_weight(gpui::FontWeight::MEDIUM)
-                                .text_color(theme.foreground)
-                                .child("What should we build?"),
-                        )
-                        .child(
-                            div()
-                                .mt_2()
-                                .text_size(px(13.0))
-                                .text_color(theme.muted_foreground)
-                                .child("Pick an agent and a working directory, then start typing."),
-                        ),
-                ),
-        );
+        // Centered stack: hero copy + ONE rounded composer card holding the
+        // rail/cwd/prompt. Banner floats above everything when present.
+        let mut center = h_flex()
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .items_center()
+            .justify_center();
 
-        if let Some(banner) = banner {
-            column = column.child(banner);
+        if let Some(bn) = banner.clone() {
+            center = center.child(div().absolute().top_3().left_1_2().child(bn));
         }
-        column = column.child(driver_bar);
 
-        // Composer row: Send doubles as the creator button while busy-latched.
-        let send_label = if self.busy { "Starting…" } else { "Send" };
-        let mut composer_row = h_flex()
-            .p_2()
-            .gap_2()
-            .border_t_1()
+        let card = div()
+            .w_full()
+            .max_w(px(680.0))
+            .mx_4()
+            .rounded_lg()
+            .border_1()
             .border_color(theme.border)
-            .items_end()
+            .bg(theme.background)
+            .shadow_md()
+            .p_3()
+            .gap_2()
+            .flex()
+            .flex_col()
+            .child(
+                div().mb_1().child(
+                    div()
+                        .text_size(px(18.0))
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(theme.foreground)
+                        .child("What should we build?"),
+                ),
+            )
             .child(
                 div()
-                    .id(dom_ids::COMPOSER)
-                    .flex_1()
-                    .child(Input::new(&self.composer)),
-            );
+                    .mb_1()
+                    .text_size(px(12.5))
+                    .text_color(theme.muted_foreground)
+                    .child(if install_hint_visible {
+                        "Install one of: claude-code-acp · gemini --acp · codex-acp, then click the chip to re-detect."
+                    } else {
+                        "Pick an agent and a working directory, then start typing."
+                    }),
+            )
+            .child(driver_bar)
+            .child(div().id(dom_ids::COMPOSER).child(Input::new(&self.composer)));
+
+        center = center.child(card);
+        column = column.child(center);
+
+        // Send under the card, right-aligned; busy latches like t3's isSendBusy.
+        let send_label = if self.busy { "Starting…" } else { "Send" };
+        let mut bottom = h_flex().px_3().pb_3().justify_end();
         if !self.busy {
-            composer_row =
-                composer_row.child(
+            bottom =
+                bottom.child(
                     Button::new(dom_ids::SEND_TURN)
                         .primary()
                         .label(send_label)
@@ -675,7 +689,7 @@ impl ThreadView {
                         })),
                 );
         } else {
-            composer_row = composer_row.child(
+            bottom = bottom.child(
                 Button::new(dom_ids::SEND_TURN)
                     .primary()
                     .disabled(true)
@@ -683,7 +697,7 @@ impl ThreadView {
                     .small(),
             );
         }
-        column = column.child(composer_row);
+        column = column.child(bottom);
 
         column.into_any_element()
     }
