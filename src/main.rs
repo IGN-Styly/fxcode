@@ -1,20 +1,42 @@
+use crate::{AlignItems::Center, Position::Relative};
+use libc::{STDOUT_FILENO, TIOCGWINSZ, ioctl, winsize};
 use std::{
     default,
-    io::{stdout, Write},
-    sync::{atomic::{AtomicBool, Ordering}, Arc},
+    io::{Write, stdout},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 use termion::event::Key;
 use termion::input::TermRead;
 use termion::{async_stdin, clear, cursor, raw::IntoRawMode, terminal_size};
 
-use crate::{AlignItems::Center, Position::Relative};
-
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct App {
-    screen_buffer: Vec<char>,
-    width: u16,
-    height: u16,
+    screen_buffer: Vec<Cell>,
+    winfo: winsize,
+}
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            winfo: {
+                winsize {
+                    ws_row: 0,
+                    ws_col: 0,
+                    ws_xpixel: 0,
+                    ws_ypixel: 0,
+                }
+            },
+            screen_buffer: Vec::new(),
+        }
+    }
+}
+#[derive(Debug, Default, Clone)]
+struct Cell {
+    grapheme: String,
+    width: u8,
 }
 #[derive(Default, Debug)]
 struct Style {
@@ -117,63 +139,24 @@ impl Default for AlignItems {
     }
 }
 #[derive(Debug, Default)]
-struct Container {
+struct Box {
     style: Style,
 }
-
+trait Node {
+    fn render(&self, ctx: &mut App);
+}
 impl App {
     fn init(&mut self) {
-        let (x, y) = terminal_size().unwrap();
-        self.width = x;
-        self.height = y;
-        self.screen_buffer.clear();
-        self.screen_buffer.resize((x as usize) * (y as usize), 'e');
-    }
-}
-impl Container {
-    fn render(&self, ctx: &mut App) {
-        // render top
-
-        // render bottom
-        // render left
-        // render right
-        // write buffer to screen
-        for (i, cell) in ctx.screen_buffer.iter().enumerate() {
-            print!("{}", cell);
-            if (i as i32 + 1) % ctx.width as i32 == 0 {
-                print!("\r\n");
-            };
+        let result = unsafe { ioctl(STDOUT_FILENO, TIOCGWINSZ, &mut self.winfo) };
+        if result == -1 {
+            eprintln!("could not get terminal size");
+            return;
         }
     }
+    fn render(&mut self) {}
 }
+
 fn main() {
-    let resized = Arc::new(AtomicBool::new(false));
-    signal_hook::flag::register(signal_hook::consts::SIGWINCH, Arc::clone(&resized)).unwrap();
-
-    let mut stdout = stdout().into_raw_mode().unwrap();
-    write!(stdout, "{}{}", cursor::Hide, clear::All).unwrap();
-
     let mut app = App::default();
     app.init();
-    let c = Container::default();
-    c.render(&mut app);
-    stdout.flush().unwrap();
-
-    let mut keys = async_stdin().keys();
-    loop {
-        if let Some(Ok(key)) = keys.next() {
-            if let Key::Char('q') = key {
-                break;
-            }
-        }
-        if resized.swap(false, Ordering::Relaxed) {
-            app.init();
-            write!(stdout, "{}{}", cursor::Goto(1, 1), clear::All).unwrap();
-            c.render(&mut app);
-        }
-        stdout.flush().unwrap();
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    write!(stdout, "{}", cursor::Show).unwrap();
 }
-
