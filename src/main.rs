@@ -6,10 +6,37 @@ struct App {
     height: u16,
 }
 
-enum Properties {}
-struct Component {
-    inner: Vec<Component>,
-    properties: Vec<Properties>,
+struct Style{
+    align_content:AlignContent,
+    align_items:AlignItems,
+    align_self:
+    flex:
+    flex_basis:
+    flex_direction:
+    flex_flow:
+    flex_grow:
+    flex_line_count:
+    flex_shrink:
+    flex_wrap:
+    justify_content:
+}
+enum AlignContent{
+    Start,
+    End,
+    Center,
+    SpaceBetween,
+    SpaceAround,
+    SpaceEvenly,
+    Stretch,
+}
+enum AlignItems{
+    Start,
+    End,
+    Center,
+    Stretch,
+}
+struct Container {
+    style:Style,
 }
 
 impl App {
