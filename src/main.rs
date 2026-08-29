@@ -4,6 +4,7 @@ use std::{
     default,
     fmt::Debug,
     io::{Write, stdout},
+    process::Child,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -180,7 +181,79 @@ impl App {
     }
 }
 fn layout(node: &Node, viewport: Rect, nodes: &mut Vec<(Node, Rect)>) {
-    // nav tree recursive fill nodes
+    nodes.push((node.clone(), viewport));
+    let Node::Container(c) = node;
+    let s = &c.style;
+    let b = if s.border.is_some() { 1 } else { 0 };
+    let content = calc_area(viewport, b, &s.padding);
+    let n = c.items.len() as u16;
+    if n == 0 {
+        return;
+    }
+
+    let gaps = s.gap as u16 * (n - 1);
+    let slot = match s.flex_direction {
+        FlexDirection::Row | FlexDirection::RowReverse => content.w.saturating_sub(gaps) / n,
+        FlexDirection::Column | FlexDirection::ColumnReverse => content.h.saturating_sub(gaps) / n,
+    };
+    let (mut cx, mut cy) = (content.x, content.y);
+    for childNode in &c.items {
+        let r = match s.flex_direction {
+            FlexDirection::Column | FlexDirection::ColumnReverse => Rect {
+                x: cx,
+                y: content.y,
+                w: slot,
+                h: content.h,
+            },
+            FlexDirection::Row | FlexDirection::RowReverse => Rect {
+                x: content.x,
+                y: cy,
+                w: content.w,
+                h: slot,
+            },
+        };
+        layout(childNode, r, nodes);
+        match s.flex_direction {
+            FlexDirection::Column | FlexDirection::ColumnReverse => {
+                cx += slot + s.gap as u16;
+            }
+            FlexDirection::Row | FlexDirection::RowReverse => {
+                cy += slot + s.gap as u16;
+            }
+        }
+    }
+}
+fn calc_area(viewport: Rect, border: u16, padding: &Padding) -> Rect {
+    let mut content = viewport;
+    match padding {
+        Padding::All(i) => {
+            content.h -= *i as u16;
+            content.w -= *i as u16;
+            content.x += *i as u16;
+            content.y += *i as u16;
+        }
+        Padding::Bottom(i) => {
+            content.h -= *i as u16;
+        }
+        Padding::Top(i) => {
+            content.y += *i as u16;
+        }
+        Padding::Left(i) => {
+            content.w -= *i as u16;
+        }
+        Padding::Right(i) => {
+            content.x += *i as u16;
+        }
+        Padding::Horizontal(i) => {
+            content.w -= *i as u16;
+            content.x += *i as u16;
+        }
+        Padding::Vertical(i) => {
+            content.h -= *i as u16;
+            content.y += *i as u16;
+        }
+    }
+    return content;
 }
 
 fn main() {
