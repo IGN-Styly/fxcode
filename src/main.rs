@@ -2,6 +2,7 @@ use crate::{AlignItems::Center, Position::Relative};
 use libc::{STDOUT_FILENO, TIOCGWINSZ, ioctl, winsize};
 use std::{
     default,
+    fmt::Debug,
     io::{Write, stdout},
     sync::{
         Arc,
@@ -17,10 +18,12 @@ use termion::{async_stdin, clear, cursor, raw::IntoRawMode, terminal_size};
 struct App {
     screen_buffer: Vec<Cell>,
     winfo: winsize,
+    tree: Vec<Node>,
 }
 impl Default for App {
     fn default() -> Self {
         Self {
+            tree: Vec::new(),
             winfo: {
                 winsize {
                     ws_row: 0,
@@ -38,7 +41,7 @@ struct Cell {
     grapheme: String,
     width: u8,
 }
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 struct Style {
     padding: Padding,
     border: Option<Border>,
@@ -49,9 +52,9 @@ struct Style {
     flex_direction: FlexDirection,
     justify_content: JustifyContent,
 }
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct Color(u32);
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Border {
     border_color: Color,
     border_style: BorderStyle,
@@ -59,7 +62,7 @@ struct Border {
     title_color: Color,
     title_alignment: TitleAlignment,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum TitleAlignment {
     Left,
     Center,
@@ -70,9 +73,9 @@ impl Default for TitleAlignment {
         TitleAlignment::Left
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum BorderStyle {}
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Padding {
     All(u8),
     Top(u8),
@@ -87,7 +90,7 @@ impl Default for Padding {
         Padding::All(0)
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum JustifyContent {
     Start,
     End,
@@ -98,7 +101,7 @@ impl Default for JustifyContent {
         JustifyContent::Center
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum FlexDirection {
     Column,
     ColumnReverse,
@@ -110,7 +113,7 @@ impl Default for FlexDirection {
         FlexDirection::Column
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Position {
     Relative,
     Absolute,
@@ -126,7 +129,7 @@ enum AlignSelf {
     Center,
     Stretch,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum AlignItems {
     Start,
     End,
@@ -138,12 +141,14 @@ impl Default for AlignItems {
         Center
     }
 }
-#[derive(Debug, Default)]
-struct Box {
+#[derive(Debug, Default, Clone)]
+struct Container {
     style: Style,
+    items: Vec<Node>,
 }
-trait Node {
-    fn render(&self, ctx: &mut App);
+#[derive(Debug, Clone)]
+enum Node {
+    Container(Container),
 }
 impl App {
     fn init(&mut self) {
@@ -153,10 +158,14 @@ impl App {
             return;
         }
     }
-    fn render(&mut self) {}
+    fn render(&mut self) {
+        for
+    }
 }
 
 fn main() {
     let mut app = App::default();
     app.init();
+    app.tree.push(Node::Container(Container::default()));
+    app.render();
 }
