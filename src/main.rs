@@ -6,37 +6,69 @@ struct App {
     height: u16,
 }
 
-struct Style{
-    align_content:AlignContent,
-    align_items:AlignItems,
-    align_self:
-    flex:
-    flex_basis:
-    flex_direction:
-    flex_flow:
-    flex_grow:
-    flex_line_count:
-    flex_shrink:
-    flex_wrap:
-    justify_content:
+struct Style {
+    padding: Padding,
+    border: Option<Border>,
+    gap: u8,
+    position: Position,
+    z: u8,
+    align_items: AlignItems,
+    flex_direction: FlexDirection,
+    justify_content: JustifyContent,
 }
-enum AlignContent{
+
+struct Color(u32);
+struct Border {
+    border_color: Color,
+    border_style: BorderStyle,
+    title: String,
+    title_color: Color,
+    title_alignment: TitleAlignment,
+}
+enum TitleAlignment {
+    Left,
+    Center,
+    Right,
+}
+enum BorderStyle {}
+enum Padding {
+    All(u8),
+    Top(u8),
+    Bottom(u8),
+    Right(u8),
+    Left(u8),
+    Horizontal(u8),
+    Vertical(u8),
+}
+enum JustifyContent {
     Start,
     End,
     Center,
-    SpaceBetween,
-    SpaceAround,
-    SpaceEvenly,
+}
+enum FlexDirection {
+    Column,
+    ColumnReverse,
+    Row,
+    RowReverse,
+}
+enum Position {
+    Relative,
+    Absolute,
+}
+enum AlignSelf {
+    Start,
+    End,
+    Center,
     Stretch,
 }
-enum AlignItems{
+enum AlignItems {
     Start,
     End,
     Center,
     Stretch,
 }
 struct Container {
-    style:Style,
+    style: Style,
 }
 
 impl App {
