@@ -6,6 +6,12 @@ struct App {
     height: u16,
 }
 
+enum Properties {}
+struct Component {
+    inner: Vec<Component>,
+    properties: Vec<Properties>,
+}
+
 impl App {
     fn init(&mut self) {
         let (x, y) = terminal_size().unwrap();
