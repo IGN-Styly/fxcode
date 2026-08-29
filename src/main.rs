@@ -45,7 +45,7 @@ struct Cell {
 struct Style {
     padding: Padding,
     border: Option<Border>,
-    gap: u8,
+    gap: u16,
     position: Position,
     z: i16,
     align_items: AlignItems,
@@ -150,6 +150,14 @@ struct Container {
 enum Node {
     Container(Container),
 }
+// in cols/rows
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Rect {
+    x: u16,
+    y: u16,
+    w: u16,
+    h: u16,
+}
 impl App {
     fn init(&mut self) {
         let result = unsafe { ioctl(STDOUT_FILENO, TIOCGWINSZ, &mut self.winfo) };
@@ -159,8 +167,20 @@ impl App {
         }
     }
     fn render(&mut self) {
-        for
+        let viewport = Rect {
+            x: 0,
+            y: 0,
+            w: self.winfo.ws_col as u16,
+            h: self.winfo.ws_row as u16,
+        };
+        let mut nodes: Vec<(Node, Rect)> = Vec::new();
+        for node in &self.tree {
+            layout(node, viewport, &mut nodes);
+        }
     }
+}
+fn layout(node: &Node, viewport: Rect, nodes: &mut Vec<(Node, Rect)>) {
+    // nav tree recursive fill nodes
 }
 
 fn main() {
