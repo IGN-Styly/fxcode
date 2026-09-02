@@ -1,3 +1,4 @@
+mod ffi;
 mod kitty;
 mod layout;
 mod mpv;

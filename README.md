@@ -21,6 +21,18 @@ Runtime::new()?.run(App::root(view), |_, event| match event {
 
 Use `Renderer<W>` directly when the program already has an input loop or needs custom output.
 
+## Go
+
+Build the native library before using the cgo package:
+
+```sh
+cargo build --lib
+go run ./go/examples/basic
+```
+
+The Go package is `github.com/IGN-Styly/fxcode/go/fxcode`. Call `Close` on runtimes,
+images, and videos when they are no longer needed.
+
 ## Images
 
 ```rust

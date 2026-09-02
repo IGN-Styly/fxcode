@@ -187,35 +187,12 @@ impl Runtime {
             ControlFlow::Continue | ControlFlow::Render => self.draw(&app)?,
         }
 
-        loop {
-            if let Ok(error) = self.render_errors.try_recv() {
-                return Err(error);
-            }
-
-            let mut flow = match self.input.recv_timeout(self.config.event_wait) {
-                Ok(Ok(InputEvent::Key(key))) => update(&mut app, Event::Key(key)),
-                Ok(Ok(InputEvent::Mouse(mouse))) => {
-                    self.send(RenderCommand::Mouse(mouse))?;
-                    update(&mut app, Event::Mouse(mouse))
-                }
-                Ok(Ok(InputEvent::Unsupported(_))) => ControlFlow::Continue,
-                Ok(Err(error)) => return Err(error),
-                Err(RecvTimeoutError::Timeout) => ControlFlow::Continue,
-                Err(RecvTimeoutError::Disconnected) => ControlFlow::Exit,
-            };
-
-            if self.resized.swap(false, Ordering::Relaxed) {
-                self.size = TerminalSize::current()?;
-                self.send(RenderCommand::Resize(self.size))?;
-                let resize_flow = update(&mut app, Event::Resize(self.size));
-                if resize_flow == ControlFlow::Exit {
-                    flow = ControlFlow::Exit
-                } else {
-                    flow = ControlFlow::Render
-                }
-            }
+        while let Some(event) = self.next_event()? {
+            let resized = matches!(event, Event::Resize(_));
+            let flow = update(&mut app, event);
 
             match flow {
+                ControlFlow::Continue if resized => self.draw(&app)?,
                 ControlFlow::Continue => {}
                 ControlFlow::Render => self.draw(&app)?,
                 ControlFlow::Exit => break,
@@ -224,7 +201,33 @@ impl Runtime {
         Ok(())
     }
 
-    fn draw(&self, app: &App) -> io::Result<()> {
+    pub(crate) fn next_event(&mut self) -> io::Result<Option<Event>> {
+        loop {
+            if let Ok(error) = self.render_errors.try_recv() {
+                return Err(error);
+            }
+
+            if self.resized.swap(false, Ordering::Relaxed) {
+                self.size = TerminalSize::current()?;
+                self.send(RenderCommand::Resize(self.size))?;
+                return Ok(Some(Event::Resize(self.size)));
+            }
+
+            match self.input.recv_timeout(self.config.event_wait) {
+                Ok(Ok(InputEvent::Key(key))) => return Ok(Some(Event::Key(key))),
+                Ok(Ok(InputEvent::Mouse(mouse))) => {
+                    self.send(RenderCommand::Mouse(mouse))?;
+                    return Ok(Some(Event::Mouse(mouse)));
+                }
+                Ok(Ok(InputEvent::Unsupported(_))) => {}
+                Ok(Err(error)) => return Err(error),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return Ok(None),
+            }
+        }
+    }
+
+    pub(crate) fn draw(&self, app: &App) -> io::Result<()> {
         self.send(RenderCommand::Draw(app.tree.clone()))
     }
 

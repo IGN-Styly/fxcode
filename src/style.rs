@@ -108,6 +108,10 @@ impl Color {
     pub const PURPLE: Self = Self(0x800080ff);
     pub const PINK: Self = Self(0xffc0cbff);
 
+    pub const fn from_rgba(red: u8, green: u8, blue: u8, alpha: u8) -> Self {
+        Self(((red as u32) << 24) | ((green as u32) << 16) | ((blue as u32) << 8) | alpha as u32)
+    }
+
     pub const fn black() -> Self {
         Self::BLACK
     }
