@@ -1,6 +1,6 @@
 # fxcode
 
-Terminal UI library with flex layout, true-color cells, a managed runtime, and Kitty images.
+Terminal UI
 
 ```rust
 use fxcode::{App, Border, Color, Container, ControlFlow, Event, Runtime, Style};
@@ -52,15 +52,3 @@ let border = Border::plain(Color::white())
     .title("Video")
     .media_controls(video.controls());
 ```
-
-Media controls use Unicode icons in the bottom border. Click the play/pause icon to toggle
-playback, click or drag the progress bar to seek, or click the centered play icon while paused.
-Mouse events are also sent to the app as `Event::Mouse`.
-
-Video uses libmpv to decode into a reused frame buffer. Fxcode sends the frames through the
-Kitty graphics protocol, so all terminal writes stay on the render thread. Libmpv must be installed
-and the terminal must support Kitty graphics. The player starts when the node first renders and
-stops when the node leaves the tree.
-
-`Runtime` polls for new frames. When using `Renderer` directly, call
-`Renderer::draw_video_frames` from the program's event loop.
