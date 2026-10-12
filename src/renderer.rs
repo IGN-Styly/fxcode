@@ -585,25 +585,39 @@ fn draw_frame(screen: &mut [Cell], cols: u16, rect: Rect, border: &Border) {
 }
 
 fn draw_title(screen: &mut [Cell], cols: u16, rect: Rect, border: &Border) {
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
     let available = usize::from(rect.w.saturating_sub(2));
-    let title: Vec<char> = border.title.chars().take(available).collect();
-    let free = available - title.len();
+    let mut title = String::new();
+    let mut width = 0;
+    for grapheme in border.title.graphemes(true) {
+        if grapheme.chars().any(char::is_control) {
+            continue;
+        }
+        let cells = grapheme.width();
+        if width + cells > available {
+            break;
+        }
+        title.push_str(grapheme);
+        width += cells;
+    }
+    let free = available - width;
     let offset = match border.title_alignment {
         TitleAlignment::Left => 0,
         TitleAlignment::Center => free / 2,
         TitleAlignment::Right => free,
     };
-    let start = rect.x + 1 + offset as u16;
-    for (index, character) in title.into_iter().enumerate() {
-        set(
-            screen,
-            cols,
-            start + index as u16,
-            rect.y,
-            &character.to_string(),
-            border.title_color,
-        );
-    }
+    paint_text(
+        &crate::Text::new(title).color(border.title_color),
+        Rect {
+            x: rect.x.saturating_add(1).saturating_add(offset as u16),
+            y: rect.y,
+            w: width as u16,
+            h: u16::from(rect.h > 0),
+        },
+        screen,
+        cols,
+    );
 }
 
 #[cfg(test)]
