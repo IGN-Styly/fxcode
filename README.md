@@ -64,3 +64,13 @@ let border = Border::plain(Color::white())
     .title("Video")
     .media_controls(video.controls());
 ```
+
+## Text
+
+`Text::new("Hello, world!").color(Color::CYAN).style(Style::new().height(1))`
+adds plain text to a container or app. Text respects its layout rectangle, clips
+at the right and bottom edges, and starts a row at each newline. Set its width
+and height through `Style`, as with other nodes. Wide characters and combining
+marks keep their terminal cell width. Control characters are ignored; ANSI
+escape sequences are not supported. Wrap text in the app before passing it in
+when scrolling or word wrapping is needed.

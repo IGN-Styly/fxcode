@@ -60,6 +60,7 @@ impl Container {
 #[derive(Debug, Clone)]
 pub enum Node {
     Container(Container),
+    Text(Text),
     Image(Image),
     Video(Video),
 }
@@ -68,6 +69,7 @@ impl Node {
     pub fn style(&self) -> &Style {
         match self {
             Self::Container(container) => &container.style,
+            Self::Text(text) => &text.style,
             Self::Image(image) => &image.style,
             Self::Video(video) => &video.style,
         }
@@ -364,5 +366,37 @@ impl Video {
 
     pub fn controls(&self) -> VideoControls {
         self.control.clone()
+    }
+}
+
+/// Plain text, clipped to its layout rectangle. Newlines start a new row.
+/// Control characters are ignored; input is never interpreted as terminal escapes.
+#[derive(Debug, Clone)]
+pub struct Text {
+    pub content: String,
+    pub style: Style,
+    pub color: crate::Color,
+}
+
+impl Text {
+    pub fn new(content: impl Into<String>) -> Self {
+        Self {
+            content: content.into(),
+            style: Style::new(),
+            color: crate::Color::WHITE,
+        }
+    }
+    pub fn style(mut self, style: Style) -> Self {
+        self.style = style;
+        self
+    }
+    pub fn color(mut self, color: crate::Color) -> Self {
+        self.color = color;
+        self
+    }
+}
+impl From<Text> for Node {
+    fn from(value: Text) -> Self {
+        Self::Text(value)
     }
 }
