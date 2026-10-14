@@ -281,17 +281,19 @@ impl Player {
         let encoded_capacity = encoded_capacity(frame)?;
         let handle = NonNull::new(unsafe { mpv_create() })
             .ok_or_else(|| io::Error::other("mpv_create failed"))?;
-        if let Err(error) = mpv_result(unsafe {
-            mpv_set_option_string(handle.as_ptr(), c"vo".as_ptr(), c"libmpv".as_ptr())
-        }) {
-            unsafe { mpv_terminate_destroy(handle.as_ptr()) };
-            return Err(error);
-        }
-        if let Err(error) = mpv_result(unsafe {
-            mpv_set_option_string(handle.as_ptr(), c"profile".as_ptr(), c"sw-fast".as_ptr())
-        }) {
-            unsafe { mpv_terminate_destroy(handle.as_ptr()) };
-            return Err(error);
+        // Keep the file open at its end, so seeking back and replaying still work.
+        for (name, value) in [
+            (c"vo", c"libmpv"),
+            (c"profile", c"sw-fast"),
+            (c"keep-open", c"yes"),
+            (c"keep-open-pause", c"no"),
+        ] {
+            if let Err(error) = mpv_result(unsafe {
+                mpv_set_option_string(handle.as_ptr(), name.as_ptr(), value.as_ptr())
+            }) {
+                unsafe { mpv_terminate_destroy(handle.as_ptr()) };
+                return Err(error);
+            }
         }
         if let Err(error) = mpv_result(unsafe { mpv_initialize(handle.as_ptr()) }) {
             unsafe { mpv_terminate_destroy(handle.as_ptr()) };
@@ -377,21 +379,18 @@ impl Player {
                             Err(error) => thread_error.store(error, Ordering::Release),
                         }
                     }
+                    // A seek can fail, such as before the file loads; playback goes on.
                     let seek_steps = thread_control.seek_steps.swap(0, Ordering::AcqRel);
-                    if seek_steps != 0
-                        && let Err(error) = thread_handle.seek(seek_steps)
-                    {
-                        thread_error.store(error, Ordering::Release);
+                    if seek_steps != 0 {
+                        let _ = thread_handle.seek(seek_steps);
                     }
                     let seek_target = f64::from_bits(
                         thread_control
                             .seek_target
                             .swap((-1.0_f64).to_bits(), Ordering::AcqRel),
                     );
-                    if seek_target >= 0.0
-                        && let Err(error) = thread_handle.set_position(seek_target)
-                    {
-                        thread_error.store(error, Ordering::Release);
+                    if seek_target >= 0.0 {
+                        let _ = thread_handle.set_position(seek_target);
                     }
                     if last_status.elapsed() >= Duration::from_millis(100) {
                         if let Ok(position) = thread_handle.get_double(c"time-pos") {
@@ -941,5 +940,47 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         panic!("libmpv did not report the bad media");
+    }
+    #[test]
+    #[ignore = "requires FXCODE_TEST_VIDEO"]
+    fn seeking_past_the_end_keeps_the_player_usable() {
+        let path = std::env::var_os("FXCODE_TEST_VIDEO").expect("set FXCODE_TEST_VIDEO");
+        let video = Video::from_path(path).unwrap();
+        let frame = Frame::new(
+            Rect {
+                x: 0,
+                y: 0,
+                w: 8,
+                h: 4,
+            },
+            TerminalSize::default(),
+            0,
+        )
+        .unwrap();
+        let mut player = Player::new(&video, frame, 1).unwrap();
+        let mut wait = |done: &dyn Fn() -> bool| {
+            for _ in 0..400 {
+                player.render().unwrap();
+                if done() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            panic!("libmpv did not get there");
+        };
+        let controls = video.controls();
+        wait(&|| controls.duration() > 0.0);
+        for _ in 0..40 {
+            video.seek_forward();
+        }
+        wait(&|| controls.position() >= controls.duration() - 0.5);
+        video.seek_forward();
+        controls.seek_to(0.0);
+        // Replace the optimistic position, so only a libmpv report can pass.
+        controls
+            .inner
+            .position
+            .store(f64::INFINITY.to_bits(), Ordering::Release);
+        wait(&|| controls.position() < 1.0);
     }
 }
