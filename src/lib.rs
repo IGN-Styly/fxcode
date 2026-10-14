@@ -14,4 +14,6 @@ pub use style::{
     AlignItems, AlignSelf, Border, BorderStyle, Color, FlexDirection, JustifyContent, Padding,
     Position, Style, TitleAlignment,
 };
-pub use tree::{App, Container, Image, ImageFit, ImageId, Node, Video, VideoControls, VideoId};
+pub use tree::{
+    App, Container, Image, ImageFit, ImageId, Node, Text, Video, VideoControls, VideoId,
+};

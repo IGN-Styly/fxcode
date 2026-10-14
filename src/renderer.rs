@@ -183,7 +183,7 @@ impl<W: Write> Renderer<W> {
             .iter()
             .filter_map(|item| match item.node {
                 Node::Image(image) => Some((image, item.rect)),
-                Node::Container(_) | Node::Video(_) => None,
+                Node::Container(_) | Node::Text(_) | Node::Video(_) => None,
             })
             .collect();
         self.kitty.draw(&mut self.output, &images, self.size)?;
@@ -472,6 +472,10 @@ fn write_background<W: Write>(output: &mut W, value: Option<Color>) -> io::Resul
 
 fn paint_cells(nodes: &[PositionedNode<'_>], screen: &mut [Cell], cols: u16) {
     for item in nodes {
+        if let Node::Text(text) = item.node {
+            paint_text(text, item.rect, screen, cols);
+            continue;
+        }
         let Node::Container(container) = item.node else {
             continue;
         };
@@ -480,6 +484,37 @@ fn paint_cells(nodes: &[PositionedNode<'_>], screen: &mut [Cell], cols: u16) {
         }
         if let Some(border) = &container.style.border {
             draw_frame(screen, cols, item.rect, border);
+        }
+    }
+}
+
+fn paint_text(text: &crate::Text, rect: Rect, screen: &mut [Cell], cols: u16) {
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
+    if let Some(background) = text.style.background_color {
+        fill_background(screen, cols, rect, background);
+    }
+    for (row, line) in text.content.lines().take(usize::from(rect.h)).enumerate() {
+        let mut x = rect.x;
+        let end = rect.x.saturating_add(rect.w).min(cols);
+        for grapheme in line.graphemes(true) {
+            if grapheme.chars().any(char::is_control) {
+                continue;
+            }
+            let width = grapheme.width();
+            if width == 0 {
+                continue;
+            }
+            if usize::from(x) + width > usize::from(end) {
+                break;
+            }
+            let y = rect.y.saturating_add(row as u16);
+            set(screen, cols, x, y, grapheme, text.color);
+            // Empty continuation cells must not overwrite the wide glyph on flush.
+            for offset in 1..width {
+                set(screen, cols, x + offset as u16, y, "", text.color);
+            }
+            x += width as u16;
         }
     }
 }
@@ -550,25 +585,39 @@ fn draw_frame(screen: &mut [Cell], cols: u16, rect: Rect, border: &Border) {
 }
 
 fn draw_title(screen: &mut [Cell], cols: u16, rect: Rect, border: &Border) {
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
     let available = usize::from(rect.w.saturating_sub(2));
-    let title: Vec<char> = border.title.chars().take(available).collect();
-    let free = available - title.len();
+    let mut title = String::new();
+    let mut width = 0;
+    for grapheme in border.title.graphemes(true) {
+        if grapheme.chars().any(char::is_control) {
+            continue;
+        }
+        let cells = grapheme.width();
+        if width + cells > available {
+            break;
+        }
+        title.push_str(grapheme);
+        width += cells;
+    }
+    let free = available - width;
     let offset = match border.title_alignment {
         TitleAlignment::Left => 0,
         TitleAlignment::Center => free / 2,
         TitleAlignment::Right => free,
     };
-    let start = rect.x + 1 + offset as u16;
-    for (index, character) in title.into_iter().enumerate() {
-        set(
-            screen,
-            cols,
-            start + index as u16,
-            rect.y,
-            &character.to_string(),
-            border.title_color,
-        );
-    }
+    paint_text(
+        &crate::Text::new(title).color(border.title_color),
+        Rect {
+            x: rect.x.saturating_add(1).saturating_add(offset as u16),
+            y: rect.y,
+            w: width as u16,
+            h: u16::from(rect.h > 0),
+        },
+        screen,
+        cols,
+    );
 }
 
 #[cfg(test)]
@@ -677,5 +726,48 @@ mod tests {
             String::from_utf8_lossy(&renderer.output).contains(&parked_cursor),
             "media controls must leave the cursor hidden outside the player"
         );
+    }
+}
+
+#[cfg(test)]
+mod text_tests {
+    use super::*;
+    #[test]
+    fn text_clips_graphemes_and_filters_terminal_controls() {
+        let mut cells = vec![Cell::default(); 12];
+        let text = crate::Text::new("a界e\u{301}z\n\x1bX");
+        paint_text(
+            &text,
+            Rect {
+                x: 1,
+                y: 0,
+                w: 4,
+                h: 2,
+            },
+            &mut cells,
+            6,
+        );
+        assert_eq!(cells[1].grapheme, "a");
+        assert_eq!(cells[2].grapheme, "界");
+        assert_eq!(cells[3].grapheme, "");
+        assert_eq!(cells[4].grapheme, "e\u{301}");
+        assert_eq!(cells[5].grapheme, " ");
+        assert_eq!(cells[7].grapheme, "X");
+    }
+    #[test]
+    fn wide_glyph_does_not_cross_right_edge() {
+        let mut cells = vec![Cell::default(); 2];
+        paint_text(
+            &crate::Text::new("a界"),
+            Rect {
+                x: 0,
+                y: 0,
+                w: 2,
+                h: 1,
+            },
+            &mut cells,
+            2,
+        );
+        assert_eq!(cells[1].grapheme, " ");
     }
 }

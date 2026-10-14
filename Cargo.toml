@@ -7,6 +7,8 @@ edition = "2024"
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
+unicode-segmentation = "1.12"
+unicode-width = "0.2"
 libc = "0.2.189"
 image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
 signal-hook = "0.3"
