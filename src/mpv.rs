@@ -976,6 +976,11 @@ mod tests {
         wait(&|| controls.position() >= controls.duration() - 0.5);
         video.seek_forward();
         controls.seek_to(0.0);
+        // Replace the optimistic position, so only a libmpv report can pass.
+        controls
+            .inner
+            .position
+            .store(f64::INFINITY.to_bits(), Ordering::Release);
         wait(&|| controls.position() < 1.0);
     }
 }
